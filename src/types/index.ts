@@ -90,6 +90,9 @@ export interface Job {
   quoteLines: JobQuoteLine[];
   /** Korisnik (nalog) koji je kreirao posao */
   createdBy?: { id: string; name: string };
+  statusLocked?: boolean;
+  /** Poslednja promena statusa (za SLA / zastoj u istom statusu) */
+  statusChangedAt?: string;
   /** Adrese vezane za ovaj posao (iz reda jobs), ako su unete */
   jobBillingAddress?: string;
   jobInstallationAddress?: string;
@@ -219,11 +222,61 @@ export interface Team {
 export interface AppUser {
   id: string;
   name: string;
+  fullName?: string;
   email: string;
   role: UserRole;
   avatar?: string;
   active: boolean;
   teamId?: string;
+}
+
+export type VehicleStatus = "active" | "in_service" | "archived";
+
+export interface Vehicle {
+  id: string;
+  vehicleName: string;
+  registrationNumber?: string | null;
+  brandModel?: string | null;
+  status: VehicleStatus;
+  registrationDate?: string | null;
+  expirationDate?: string | null;
+  serviceNotes?: string | null;
+  serviceKilometers?: number | null;
+  assignedWorkerId?: string | null;
+  generalNotes?: string | null;
+  lastServiceDate?: string | null;
+  trafficPermitImageUrl?: string | null;
+  insuranceImageUrl?: string | null;
+  serviceRecordImageUrl?: string | null;
+  additionalImageUrls?: string[] | null;
+  archivedAt?: string | null;
+  createdAt: string;
+  updatedAt?: string | null;
+}
+
+export interface Worker {
+  id: string;
+  fullName: string;
+  position?: string | null;
+  phone?: string | null;
+  active: boolean;
+  userId?: string | null;
+  teamId?: string | null;
+  notes?: string | null;
+  createdAt: string;
+  updatedAt?: string | null;
+}
+
+export interface WorkerSickLeave {
+  id: string;
+  workerId: string;
+  reason: string;
+  startDate?: string | null;
+  endDate?: string | null;
+  daysCount?: number | null;
+  note?: string | null;
+  createdAt: string;
+  updatedAt?: string | null;
 }
 
 export type Statuses = JobStatus;
@@ -237,6 +290,15 @@ export const JOB_STATUS_CONFIG: Record<JobStatus, { label: string; color: string
   completed: { label: "Završen", color: "bg-success text-success-foreground" },
   complaint: { label: "Reklamacija", color: "bg-destructive text-destructive-foreground" },
   service: { label: "Servis", color: "bg-muted text-muted-foreground" },
+};
+
+export const VEHICLE_STATUS_CONFIG: Record<
+  VehicleStatus,
+  { label: string; variant: "default" | "success" | "warning" | "danger" | "info" | "muted" }
+> = {
+  active: { label: "Aktivno", variant: "success" },
+  in_service: { label: "U servisu", variant: "warning" },
+  archived: { label: "Arhivirano", variant: "muted" },
 };
 
 export const ROLE_CONFIG: Record<UserRole, { label: string; description: string; access: string[] }> = {

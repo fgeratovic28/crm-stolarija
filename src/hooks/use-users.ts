@@ -41,6 +41,7 @@ export function useUsers() {
         return {
           id: row.id,
           name: typeof row.name === "string" && row.name.trim().length > 0 ? row.name : fallbackName,
+          fullName: typeof row.full_name === "string" && row.full_name.trim().length > 0 ? row.full_name.trim() : undefined,
           email: safeEmail,
           role: safeRole,
           // `users` tabela u nekim okruženjima nema `active` kolonu (ili je null),
@@ -72,10 +73,26 @@ export function useUsers() {
     },
   });
 
+  const updateFullNameMutation = useMutation({
+    mutationFn: async ({ userId, fullName }: { userId: string; fullName: string }) => {
+      const { error } = await supabase
+        .from("users")
+        .update({ full_name: fullName.trim() || null })
+        .eq("id", userId);
+
+      if (error) throw error;
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["users"] });
+    },
+  });
+
   return {
     users,
     isLoading,
     updateRole: updateRoleMutation.mutateAsync,
+    updateFullName: updateFullNameMutation.mutateAsync,
     isUpdating: updateRoleMutation.isPending,
+    isUpdatingFullName: updateFullNameMutation.isPending,
   };
 }

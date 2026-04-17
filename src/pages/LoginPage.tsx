@@ -8,6 +8,7 @@ import { supabase } from "@/lib/supabase";
 import { useToast } from "@/hooks/use-toast";
 import { useAuthStore } from "@/stores/auth-store";
 export default function LoginPage() {
+  const [fullName, setFullName] = useState("");
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [showPassword, setShowPassword] = useState(false);
@@ -16,7 +17,7 @@ export default function LoginPage() {
   const { toast } = useToast();
   const navigate = useNavigate();
   const location = useLocation();
-  const { isAuthenticated, user, isPendingApproval } = useAuthStore();
+  const { isAuthenticated, user, isPendingApproval, authReady } = useAuthStore();
 
   const redirectAfterLogin = useMemo(() => {
     const from = (location.state as { from?: { pathname?: string } } | null)?.from?.pathname;
@@ -43,10 +44,12 @@ export default function LoginPage() {
 
   const handleAuth = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!email || !password) {
+    if (!email || !password || (isRegistering && !fullName.trim())) {
       toast({
         title: "Greška",
-        description: "Molimo unesite email i lozinku.",
+        description: isRegistering
+          ? "Molimo unesite ime i prezime, email i lozinku."
+          : "Molimo unesite email i lozinku.",
         variant: "destructive",
       });
       return;
@@ -55,13 +58,15 @@ export default function LoginPage() {
     setIsSubmitting(true);
     try {
       if (isRegistering) {
+        const cleanFullName = fullName.trim();
         // Handle registration
         const { error } = await supabase.auth.signUp({
           email,
           password,
           options: {
             data: {
-              name: email.split('@')[0], // Use part of email as name
+              full_name: cleanFullName,
+              name: cleanFullName,
             }
           }
         });
@@ -77,6 +82,7 @@ export default function LoginPage() {
             title: "Nalog kreiran",
             description: "Uspešno ste se registrovali. Sada se možete prijaviti.",
           });
+          setFullName("");
           setIsRegistering(false);
         }
       } else {
@@ -113,6 +119,14 @@ export default function LoginPage() {
       setIsSubmitting(false);
     }
   };
+
+  if (!authReady) {
+    return (
+      <div className="min-h-screen flex items-center justify-center bg-background p-4" aria-busy="true">
+        <div className="text-sm text-muted-foreground">Provera sesije...</div>
+      </div>
+    );
+  }
 
   return (
     <div className="min-h-screen flex items-center justify-center bg-background p-4">
@@ -169,6 +183,19 @@ export default function LoginPage() {
           )}
 
           <form onSubmit={handleAuth} className="space-y-4">
+            {isRegistering && (
+              <div className="space-y-2">
+                <Label htmlFor="full-name">Ime i prezime</Label>
+                <Input
+                  id="full-name"
+                  type="text"
+                  placeholder="Petar Petrović"
+                  value={fullName}
+                  onChange={e => setFullName(e.target.value)}
+                  required
+                />
+              </div>
+            )}
             <div className="space-y-2">
               <Label htmlFor="email">Email adresa</Label>
               <Input 
@@ -257,7 +284,10 @@ export default function LoginPage() {
               {isRegistering ? "Već imate nalog?" : "Nemate nalog?"}
               <button 
                 type="button" 
-                onClick={() => setIsRegistering(!isRegistering)}
+                onClick={() => {
+                  setIsRegistering(!isRegistering);
+                  setFullName("");
+                }}
                 className="ml-1 text-primary hover:underline font-medium"
               >
                 {isRegistering ? "Prijavite se" : "Registrujte se"}

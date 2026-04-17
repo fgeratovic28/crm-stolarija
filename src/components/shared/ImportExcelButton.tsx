@@ -97,7 +97,7 @@ export function ImportExcelButton<T>({
       </Button>
 
       <Dialog open={showConfirm} onOpenChange={setShowConfirm}>
-        <DialogContent className="max-w-md">
+        <DialogContent className="w-full sm:max-w-md">
           <DialogHeader>
             <DialogTitle>Potvrda uvoza</DialogTitle>
             <DialogDescription>

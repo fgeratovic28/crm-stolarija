@@ -112,9 +112,9 @@ export function CustomerForm({ initialData, onSubmit, onCancel, isLoading }: Cus
         </div>
 
         <div className="space-y-4">
-          <div className="flex items-center justify-between">
+          <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
             <FormLabel>Brojevi telefona</FormLabel>
-            <Button type="button" variant="outline" size="sm" onClick={() => appendPhone({ value: "" })}>
+            <Button type="button" variant="outline" size="sm" className="w-full shrink-0 sm:w-auto" onClick={() => appendPhone({ value: "" })}>
               <Plus className="w-3 h-3 mr-1" /> Dodaj telefon
             </Button>
           </div>
@@ -138,9 +138,9 @@ export function CustomerForm({ initialData, onSubmit, onCancel, isLoading }: Cus
         </div>
 
         <div className="space-y-4">
-          <div className="flex items-center justify-between">
+          <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
             <FormLabel>Email adrese</FormLabel>
-            <Button type="button" variant="outline" size="sm" onClick={() => appendEmail({ value: "" })}>
+            <Button type="button" variant="outline" size="sm" className="w-full shrink-0 sm:w-auto" onClick={() => appendEmail({ value: "" })}>
               <Plus className="w-3 h-3 mr-1" /> Dodaj email
             </Button>
           </div>
@@ -203,7 +203,7 @@ export function CustomerForm({ initialData, onSubmit, onCancel, isLoading }: Cus
           )} />
         </div>
 
-        <div className="flex justify-end gap-2 pt-4">
+        <div className="flex flex-col-reverse gap-2 pt-4 sm:flex-row sm:justify-end [&>button]:w-full sm:[&>button]:w-auto">
           <Button type="button" variant="outline" onClick={onCancel}>Otkaži</Button>
           <Button type="submit" disabled={isLoading}>{initialData?.id ? "Sačuvaj izmene" : "Kreiraj klijenta"}</Button>
         </div>

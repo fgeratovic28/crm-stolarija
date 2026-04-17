@@ -4,6 +4,8 @@ import { FieldReport } from "@/types";
 import { useToast } from "@/hooks/use-toast";
 import { useAuthStore } from "@/stores/auth-store";
 import { formatQueryError } from "@/lib/utils";
+import { upsertSystemActivity } from "@/lib/activity-automation";
+import { recomputeJobStatus } from "@/lib/job-status-automation";
 
 export function useFieldReports(jobId?: string, workOrderId?: string) {
   const { toast } = useToast();
@@ -120,6 +122,20 @@ export function useFieldReports(jobId?: string, workOrderId?: string) {
         if (statusError) throw statusError;
       }
 
+      if (report.jobId) {
+        await upsertSystemActivity({
+          jobId: report.jobId,
+          description: "Dodat terenski izveštaj",
+          systemKey: `field-report-created:${data.id}`,
+          authorId: user?.id ?? null,
+        });
+        try {
+          await recomputeJobStatus(report.jobId, user?.id ?? null);
+        } catch (err) {
+          console.warn("Auto status recompute failed after field report:", err);
+        }
+      }
+
       return data;
     },
     onSuccess: (_, variables) => {
@@ -129,7 +145,10 @@ export function useFieldReports(jobId?: string, workOrderId?: string) {
       }
       queryClient.invalidateQueries({ queryKey: ["field-team-work-orders"] });
       queryClient.invalidateQueries({ queryKey: ["work-orders"] });
+      queryClient.invalidateQueries({ queryKey: ["activities"] });
+      queryClient.invalidateQueries({ queryKey: ["jobs"] });
       if (variables.jobId) {
+        queryClient.invalidateQueries({ queryKey: ["job", variables.jobId] });
         queryClient.invalidateQueries({ queryKey: ["work-orders", variables.jobId] });
       }
       toast({

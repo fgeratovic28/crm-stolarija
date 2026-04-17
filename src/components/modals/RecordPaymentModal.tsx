@@ -6,7 +6,7 @@ import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger } from 
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
-import { Checkbox } from "@/components/ui/checkbox";
+import { Switch } from "@/components/ui/switch";
 import { Form, FormControl, FormField, FormItem, FormLabel, FormMessage } from "@/components/ui/form";
 import { Plus } from "lucide-react";
 import { useJobRelatedData } from "@/hooks/use-job-data";
@@ -55,7 +55,7 @@ export function RecordPaymentModal({ jobId, trigger }: RecordPaymentModalProps) 
       <DialogTrigger asChild>
         {trigger || <Button size="sm"><Plus className="w-4 h-4 mr-1" /> Evidentiraj uplatu</Button>}
       </DialogTrigger>
-      <DialogContent className="max-w-md">
+      <DialogContent className="w-full sm:max-w-md">
         <DialogHeader>
           <DialogTitle>Evidentiranje plaćanja</DialogTitle>
         </DialogHeader>
@@ -78,11 +78,20 @@ export function RecordPaymentModal({ jobId, trigger }: RecordPaymentModalProps) 
             )} />
 
             <FormField control={form.control} name="includesVat" render={({ field }) => (
-              <FormItem className="flex items-center gap-2 space-y-0">
-                <FormControl>
-                  <Checkbox checked={field.value} onCheckedChange={field.onChange} />
-                </FormControl>
-                <FormLabel className="font-normal">Iznos uključuje PDV</FormLabel>
+              <FormItem className="border border-border rounded-lg p-3 bg-muted/20 space-y-0">
+                <div className="flex items-center justify-between gap-3">
+                  <FormLabel htmlFor="payment-includes-vat" className="font-normal cursor-pointer">
+                    Iznos uključuje PDV
+                  </FormLabel>
+                  <FormControl>
+                    <Switch
+                      id="payment-includes-vat"
+                      checked={field.value}
+                      onCheckedChange={field.onChange}
+                      aria-label="Iznos uključuje PDV"
+                    />
+                  </FormControl>
+                </div>
               </FormItem>
             )} />
 
@@ -94,7 +103,7 @@ export function RecordPaymentModal({ jobId, trigger }: RecordPaymentModalProps) 
               </FormItem>
             )} />
 
-            <div className="flex justify-end gap-2 pt-2">
+            <div className="flex flex-col-reverse gap-2 pt-2 sm:flex-row sm:justify-end [&>button]:w-full sm:[&>button]:w-auto">
               <Button type="button" variant="outline" onClick={() => setOpen(false)} disabled={recordPayment.isPending}>Otkaži</Button>
               <Button type="submit" disabled={recordPayment.isPending}>
                 {recordPayment.isPending ? "Evidentiranje..." : "Evidentiraj"}

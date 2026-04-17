@@ -1,11 +1,12 @@
+import type { ReactNode } from "react";
 import { LucideIcon } from "lucide-react";
 import { cn } from "@/lib/utils";
 
 interface PageHeaderProps {
   title: string;
-  description?: string;
+  description?: string | ReactNode;
   icon?: LucideIcon;
-  actions?: React.ReactNode;
+  actions?: ReactNode;
   className?: string;
 }
 
@@ -20,7 +21,9 @@ export function PageHeader({ title, description, icon: Icon, actions, className 
         )}
         <div>
           <h1 className="text-xl font-bold text-foreground">{title}</h1>
-          {description && <p className="text-sm text-muted-foreground">{description}</p>}
+          {description != null && description !== "" ? (
+            <div className="text-sm text-muted-foreground">{description}</div>
+          ) : null}
         </div>
       </div>
       {actions && <div className="flex items-center gap-2">{actions}</div>}

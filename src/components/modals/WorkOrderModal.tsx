@@ -209,7 +209,7 @@ export function WorkOrderModal({ isOpen, onClose, onSave, jobId, order, readOnly
 
   return (
     <Dialog open={isOpen} onOpenChange={onClose}>
-      <DialogContent className="sm:max-w-[450px]">
+      <DialogContent className="w-full sm:max-w-[450px]">
         <DialogHeader>
           <DialogTitle>
             {readOnly ? "Detalji radnog naloga" : (order ? "Izmeni radni nalog" : "Dodaj novi radni nalog")}
@@ -221,13 +221,13 @@ export function WorkOrderModal({ isOpen, onClose, onSave, jobId, order, readOnly
 
         {readOnly ? (
           <div className="space-y-6 py-4">
-            <div className="grid grid-cols-2 gap-4">
+            <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
               <div className="space-y-1">
                 <p className="text-xs text-muted-foreground flex items-center gap-1"><ClipboardList className="w-3 h-3" /> Tip naloga</p>
                 <p className="text-sm font-semibold">{workOrderTypes.find(t => t.value === formData.type)?.label}</p>
               </div>
-              <div className="space-y-1 text-right">
-                <p className="text-xs text-muted-foreground flex items-center gap-1 justify-end"><Calendar className="w-3 h-3" /> Datum</p>
+              <div className="space-y-1 sm:text-right">
+                <p className="text-xs text-muted-foreground flex items-center gap-1 sm:justify-end"><Calendar className="w-3 h-3" /> Datum</p>
                 <p className="text-sm font-semibold">{formData.date}</p>
               </div>
             </div>
@@ -239,13 +239,13 @@ export function WorkOrderModal({ isOpen, onClose, onSave, jobId, order, readOnly
               </div>
             </div>
 
-            <div className="grid grid-cols-2 gap-4">
+            <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
               <div className="space-y-1">
                 <p className="text-xs text-muted-foreground flex items-center gap-1"><Users className="w-3 h-3" /> Tim</p>
                 <p className="text-sm font-medium">{selectedTeam?.name || "Nedodeljen"}</p>
               </div>
-              <div className="space-y-1 text-right">
-                <p className="text-xs text-muted-foreground">Status</p>
+              <div className="space-y-1 sm:text-right">
+                <p className="text-xs text-muted-foreground sm:text-right">Status</p>
                 <p className="text-sm font-medium">{statusLabels[formData.status] || formData.status}</p>
               </div>
             </div>

@@ -7,6 +7,8 @@ export type ModuleName =
   | "finances"
   | "material-orders"
   | "suppliers"
+  | "vehicles"
+  | "workers"
   | "work-orders"
   | "field-reports"
   | "files"
@@ -27,6 +29,14 @@ export type ActionName =
   | "cancel_work_order"
   | "upload_file"
   | "delete_file"
+  | "create_vehicle"
+  | "edit_vehicle"
+  | "delete_vehicle"
+  | "archive_vehicle"
+  | "create_worker"
+  | "edit_worker"
+  | "delete_worker"
+  | "manage_worker_sick_leave"
   | "manage_users"
   | "manage_teams"
   | "add_activity"
@@ -46,6 +56,8 @@ export const MODULE_ACCESS: Record<UserRole, ModuleName[]> = {
     "finances",
     "material-orders",
     "suppliers",
+    "vehicles",
+    "workers",
     "work-orders",
     "field-reports",
     "files",
@@ -55,7 +67,7 @@ export const MODULE_ACCESS: Record<UserRole, ModuleName[]> = {
   ],
   office: ["dashboard", "jobs", "activities", "files"],
   finance: ["dashboard", "jobs", "finances", "files"],
-  procurement: ["dashboard", "jobs", "material-orders", "suppliers", "files"],
+  procurement: ["dashboard", "jobs", "material-orders", "suppliers", "vehicles", "files"],
   production: ["dashboard", "jobs", "work-orders", "files"],
   montaza: ["dashboard", "work-orders"],
   teren: ["dashboard", "work-orders", "field-reports"],
@@ -82,6 +94,14 @@ export const ACTION_ACCESS: Record<UserRole, ActionName[]> = {
     "cancel_work_order",
     "upload_file",
     "delete_file",
+    "create_vehicle",
+    "edit_vehicle",
+    "delete_vehicle",
+    "archive_vehicle",
+    "create_worker",
+    "edit_worker",
+    "delete_worker",
+    "manage_worker_sick_leave",
     "manage_users",
     "manage_teams",
     "add_activity",
@@ -111,6 +131,10 @@ export const ACTION_ACCESS: Record<UserRole, ActionName[]> = {
     "edit_order",
     "upload_file",
     "view_full_procurement",
+    "create_vehicle",
+    "edit_vehicle",
+    "delete_vehicle",
+    "archive_vehicle",
   ],
   production: [
     "view_production_details",

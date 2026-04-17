@@ -14,6 +14,13 @@ export default {
       },
     },
     extend: {
+      fontWeight: {
+        // Slightly heavier defaults app-wide (still uses DM Sans weights from Google Fonts)
+        normal: "500",
+        medium: "600",
+        semibold: "700",
+        bold: "800",
+      },
       fontFamily: {
         sans: ['"DM Sans"', 'system-ui', 'sans-serif'],
       },

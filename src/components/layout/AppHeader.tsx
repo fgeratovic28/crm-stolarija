@@ -1,7 +1,7 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { useNavigate } from "react-router-dom";
-import { useQuery } from "@tanstack/react-query";
-import { Menu, Bell, Search, DollarSign, Truck, Calendar, AlertTriangle, CheckCheck, UserCog, LogOut, User } from "lucide-react";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
+import { Menu, Bell, Search, DollarSign, Truck, Calendar, AlertTriangle, CheckCheck, UserCog, LogOut, User, Clock } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
@@ -10,10 +10,10 @@ import { cn } from "@/lib/utils";
 import { fetchNotifications, type Notification, type NotificationType } from "@/data/notifications";
 import { useRole } from "@/contexts/RoleContext";
 import { ROLE_CONFIG } from "@/types";
-import { supabase } from "@/lib/supabase";
 import { useJobs } from "@/hooks/use-jobs";
 import { useToast } from "@/hooks/use-toast";
 import { useAuthStore } from "@/stores/auth-store";
+import { performClientSignOut } from "@/lib/sign-out";
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -33,6 +33,7 @@ const typeConfig: Record<NotificationType, { icon: React.ElementType; color: str
   material_delivery: { icon: Truck, color: "text-info bg-info/10" },
   upcoming_installation: { icon: Calendar, color: "text-primary bg-primary/10" },
   complaint: { icon: AlertTriangle, color: "text-warning bg-warning/10" },
+  stale_job_status: { icon: Clock, color: "text-amber-600 bg-amber-500/10" },
 };
 
 function timeAgo(timestamp: string): string {
@@ -46,6 +47,7 @@ function timeAgo(timestamp: string): string {
 }
 
 export function AppHeader({ onToggleSidebar, onMobileMenuToggle }: AppHeaderProps) {
+  const queryClient = useQueryClient();
   const navigate = useNavigate();
   const { currentRole, currentUserName } = useRole();
   const isFieldWorkerUi = currentRole === "montaza" || currentRole === "teren";
@@ -66,15 +68,18 @@ export function AppHeader({ onToggleSidebar, onMobileMenuToggle }: AppHeaderProp
   const [filter, setFilter] = useState<"all" | NotificationType>("all");
   const [searchQuery, setSearchQuery] = useState("");
   const [searchOpen, setSearchOpen] = useState(false);
+  const isReadMapHydratedRef = useRef(false);
   const { toast } = useToast();
   const unreadCount = useMemo(() => items.reduce((count, n) => (n.read ? count : count + 1), 0), [items]);
   const readStorageKey = useMemo(() => `crm.notifications.read.${authUserId}`, [authUserId]);
 
   useEffect(() => {
+    isReadMapHydratedRef.current = false;
     try {
       const raw = window.localStorage.getItem(readStorageKey);
       if (!raw) {
         setReadMap({});
+        isReadMapHydratedRef.current = true;
         return;
       }
       const parsed = JSON.parse(raw) as Record<string, boolean>;
@@ -83,12 +88,15 @@ export function AppHeader({ onToggleSidebar, onMobileMenuToggle }: AppHeaderProp
       } else {
         setReadMap({});
       }
+      isReadMapHydratedRef.current = true;
     } catch {
       setReadMap({});
+      isReadMapHydratedRef.current = true;
     }
   }, [readStorageKey]);
 
   useEffect(() => {
+    if (!isReadMapHydratedRef.current) return;
     try {
       window.localStorage.setItem(readStorageKey, JSON.stringify(readMap));
     } catch {
@@ -99,13 +107,12 @@ export function AppHeader({ onToggleSidebar, onMobileMenuToggle }: AppHeaderProp
   const filtered = filter === "all" ? items : items.filter(n => n.type === filter);
 
   const handleLogout = async () => {
-    useAuthStore.getState().setUser(null);
-    navigate("/login");
-    const { error } = await supabase.auth.signOut({ scope: "local" });
-    if (error) {
+    const signOutError = await performClientSignOut(queryClient);
+    navigate("/login", { replace: true });
+    if (signOutError) {
       toast({
-        title: "Greška pri odjavi",
-        description: error.message,
+        title: "Odjava",
+        description: signOutError.message,
         variant: "destructive",
       });
     }
@@ -216,6 +223,7 @@ export function AppHeader({ onToggleSidebar, onMobileMenuToggle }: AppHeaderProp
                   { key: "material_delivery" as const, label: "Isporuke" },
                   { key: "upcoming_installation" as const, label: "Ugradnje" },
                   { key: "complaint" as const, label: "Reklamacije" },
+                  { key: "stale_job_status" as const, label: "SLA" },
                 ]).map(tab => (
                   <button
                     key={tab.key}
@@ -284,16 +292,21 @@ export function AppHeader({ onToggleSidebar, onMobileMenuToggle }: AppHeaderProp
           <DropdownMenuContent align="end" className="w-56">
             <DropdownMenuLabel>Moj nalog</DropdownMenuLabel>
             <DropdownMenuSeparator />
-            <DropdownMenuItem onClick={() => navigate("/settings")}>
+            <DropdownMenuItem onSelect={() => navigate("/settings")}>
               <User className="w-4 h-4 mr-2" /> Profil
             </DropdownMenuItem>
             {currentRole === 'admin' && (
-              <DropdownMenuItem onClick={() => navigate("/users")}>
+              <DropdownMenuItem onSelect={() => navigate("/users")}>
                 <UserCog className="w-4 h-4 mr-2" /> Korisnici
               </DropdownMenuItem>
             )}
             <DropdownMenuSeparator />
-            <DropdownMenuItem onClick={handleLogout} className="text-destructive focus:text-destructive">
+            <DropdownMenuItem
+              onSelect={() => {
+                void handleLogout();
+              }}
+              className="text-destructive focus:text-destructive"
+            >
               <LogOut className="w-4 h-4 mr-2" /> Odjavi se
             </DropdownMenuItem>
           </DropdownMenuContent>

@@ -7,6 +7,7 @@ const routeLabels: Record<string, string> = {
   activities: "Aktivnosti",
   finances: "Finansije",
   "material-orders": "Narudžbine materijala",
+  vehicles: "Vozila",
   "work-orders": "Radni nalozi",
   "field-reports": "Terenski izveštaji",
   files: "Fajlovi",

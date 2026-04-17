@@ -15,6 +15,7 @@ import { GenericBadge } from "@/components/shared/StatusBadge";
 import type { Supplier } from "@/types";
 import { ImportExcelButton } from "@/components/shared/ImportExcelButton";
 import type { SupplierFormValues } from "@/components/shared/SupplierForm";
+import { labelMaterialType } from "@/lib/activity-labels";
 
 export default function SuppliersPage() {
   const { suppliers, isLoading, createSupplier, updateSupplier, deleteSupplier } = useSuppliers();
@@ -160,9 +161,9 @@ export default function SuppliersPage() {
                   {supplier.materialTypes.map(type => (
                     <GenericBadge 
                       key={type} 
-                      label={type.replace("_", " ")} 
+                      label={labelMaterialType(type)} 
                       variant="info" 
-                      className="text-[10px] px-1.5 py-0 capitalize"
+                      className="text-[10px] px-1.5 py-0"
                     />
                   ))}
                 </div>
@@ -185,7 +186,7 @@ export default function SuppliersPage() {
         )}
 
         <Dialog open={isModalOpen} onOpenChange={setIsModalOpen}>
-          <DialogContent className="max-w-2xl">
+          <DialogContent className="w-full sm:max-w-2xl">
             <DialogHeader>
               <DialogTitle>{editingSupplier ? "Izmena dobavljača" : "Novi dobavljač"}</DialogTitle>
             </DialogHeader>

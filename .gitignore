@@ -24,8 +24,12 @@ dist-ssr
 *.sw?
 
 .vercel
+release
 
 # Environment variables
 .env
 .env.local
 .env.*.local
+
+# Vite (dependency scan cache)
+vite.config.ts.timestamp-*.mjs

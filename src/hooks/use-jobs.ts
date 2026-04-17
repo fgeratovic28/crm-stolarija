@@ -7,8 +7,11 @@ import { isFieldExecutionRole } from "@/lib/field-team-access";
 import { formatDateByAppLanguage, getActiveLocaleTag, readAppSettingsCache } from "@/lib/app-settings";
 import { MODULE_ACCESS } from "@/config/permissions";
 import type { UserRole } from "@/types";
+import { upsertSystemActivity } from "@/lib/activity-automation";
+import { labelJobStatus } from "@/lib/activity-labels";
 
 const VAT_RATE = 0.2;
+const CREATE_JOB_ACTIVITY = { key: "initial-entry", description: "početni unos" } as const;
 
 const JOB_SELECT_MIN = `
   *,
@@ -52,6 +55,16 @@ async function reserveNextJobNumber(prefix: string): Promise<string> {
   }
 
   return data;
+}
+
+async function ensureInitialJobActivities(jobId: string, authorId: string | null): Promise<number> {
+  await upsertSystemActivity({
+    jobId,
+    description: CREATE_JOB_ACTIVITY.description,
+    systemKey: CREATE_JOB_ACTIVITY.key,
+    authorId,
+  });
+  return 1;
 }
 
 function mapQuoteLines(db: Record<string, unknown>): JobQuoteLine[] {
@@ -117,10 +130,12 @@ export const mapDbToJob = (db: Record<string, unknown>): Job => {
     advancePayment,
     unpaidBalance: totalPrice - advancePayment, // This is a fallback, will be updated by payments if available
     createdAt: db.created_at as string,
+    statusChangedAt: (db.status_changed_at as string | null | undefined) ?? (db.created_at as string),
     scheduledDate: db.scheduled_date ? formatDateByAppLanguage(db.scheduled_date as string) : undefined,
     pricesIncludeVat: db.prices_include_vat !== false,
     quoteLines: mapQuoteLines(db),
     createdBy,
+    statusLocked: db.status_locked === true,
     jobBillingAddress: jobBill || undefined,
     jobInstallationAddress: jobInst || undefined,
     customerPhone: typeof db.customer_phone === "string" ? db.customer_phone.trim() || undefined : undefined,
@@ -307,12 +322,34 @@ export function useJobs() {
         }
       }
 
+      try {
+        const ensuredCount = await ensureInitialJobActivities(row.id, createdBy);
+        if (ensuredCount < 1) {
+          toast.warning("Posao je kreiran, ali početna aktivnost nije automatski dodata.", {
+            description: "Dodato 0/1.",
+          });
+        }
+      } catch (activitiesError) {
+        console.error("Error creating initial activities:", activitiesError);
+        const description =
+          typeof activitiesError === "object" &&
+          activitiesError !== null &&
+          "message" in activitiesError &&
+          typeof (activitiesError as { message?: unknown }).message === "string"
+            ? (activitiesError as { message: string }).message
+            : "Proverite RLS/politike i migracije za tabelu activities.";
+        toast.warning("Posao je kreiran, ali početne aktivnosti nisu automatski dodate.", {
+          description,
+        });
+      }
+
       const full = await loadJobRow(row.id);
       return mapDbToJob(full);
     },
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ["jobs"] });
       queryClient.invalidateQueries({ queryKey: ["jobs-list-minimal"] });
+      queryClient.invalidateQueries({ queryKey: ["activities"] });
       toast.success("Posao uspešno kreiran");
     },
     onError: (err: Error) => {
@@ -322,20 +359,51 @@ export function useJobs() {
 
   const updateJobStatus = useMutation({
     mutationFn: async ({ id, status }: { id: string; status: JobStatus }) => {
+      const before = await supabase.from("jobs").select("status").eq("id", id).single();
+      if (before.error) throw before.error;
+      const previousStatus = before.data?.status as JobStatus | undefined;
       const { error } = await supabase
         .from("jobs")
         .update({ status })
         .eq("id", id);
 
       if (error) throw error;
+      if (previousStatus && previousStatus !== status) {
+        const { data: authData } = await supabase.auth.getUser();
+        await upsertSystemActivity({
+          jobId: id,
+          description: `Status promenjen: ${labelJobStatus(previousStatus)} -> ${labelJobStatus(status)}`,
+          systemKey: `job-status:${id}:${previousStatus}:${status}`,
+          authorId: authData.user?.id ?? null,
+        });
+      }
     },
     onSuccess: (_, variables) => {
       queryClient.invalidateQueries({ queryKey: ["jobs"] });
       queryClient.invalidateQueries({ queryKey: ["job", variables.id] });
+      queryClient.invalidateQueries({ queryKey: ["activities"] });
       toast.success("Status posla ažuriran");
     },
     onError: (err: Error) => {
       toast.error("Greška pri ažuriranju statusa", { description: err.message });
+    },
+  });
+
+  const toggleJobStatusLock = useMutation({
+    mutationFn: async ({ id, locked }: { id: string; locked: boolean }) => {
+      const { error } = await supabase
+        .from("jobs")
+        .update({ status_locked: locked })
+        .eq("id", id);
+      if (error) throw error;
+    },
+    onSuccess: (_, variables) => {
+      queryClient.invalidateQueries({ queryKey: ["jobs"] });
+      queryClient.invalidateQueries({ queryKey: ["job", variables.id] });
+      toast.success(variables.locked ? "Automatski status je zaključan" : "Automatski status je otključan");
+    },
+    onError: (err: Error) => {
+      toast.error("Greška pri promeni zaključavanja statusa", { description: err.message });
     },
   });
 
@@ -428,6 +496,7 @@ export function useJobs() {
     createJob,
     updateJob,
     updateJobStatus,
+    toggleJobStatusLock,
     deleteJob,
   };
 }

@@ -2,7 +2,7 @@ import { useState } from "react";
 import { useParams, useNavigate } from "react-router-dom";
 import {
   ArrowLeft, MapPin, Phone, Mail, Building2, DollarSign, Package,
-  ClipboardList, Calendar, AlertTriangle, User, Copy,
+  ClipboardList, Calendar, AlertTriangle, User, Copy, Lock, Unlock,
 } from "lucide-react";
 import { AppLayout } from "@/components/layout/AppLayout";
 import { StatusBadge, GenericBadge } from "@/components/shared/StatusBadge";
@@ -28,6 +28,8 @@ import { AddActivityModal } from "@/components/modals/AddActivityModal";
 import { NewJobModal } from "@/components/modals/NewJobModal";
 import { JOB_STATUS_CONFIG, type JobStatus } from "@/types";
 import { formatCurrencyBySettings } from "@/lib/app-settings";
+import { labelMaterialType } from "@/lib/activity-labels";
+import { getInstallationAddressForDisplay } from "@/lib/map-geocode";
 
 export default function JobDetailsPage() {
   const { id } = useParams();
@@ -42,7 +44,7 @@ export default function JobDetailsPage() {
     files: jobFiles, 
     isLoading: isLoadingRelated 
   } = useJobRelatedData(id);
-  const { updateJobStatus } = useJobs();
+  const { updateJobStatus, toggleJobStatusLock } = useJobs();
   const [activeTab, setActiveTab] = useState("overview");
   const { hasAccess, canPerformAction } = useRole();
 
@@ -87,6 +89,8 @@ export default function JobDetailsPage() {
     toast.success("Broj posla kopiran");
   };
 
+  const installationAddressDisplay = getInstallationAddressForDisplay(job);
+
   return (
     <AppLayout>
       <PageTransition>
@@ -117,6 +121,32 @@ export default function JobDetailsPage() {
                       ))}
                     </SelectContent>
                   </Select>
+                  {canPerformAction("update_job_status") && (
+                    <Button
+                      variant="ghost"
+                      size="sm"
+                      className="h-7 px-2"
+                      onClick={() =>
+                        toggleJobStatusLock.mutate({
+                          id: job.id,
+                          locked: !(job.statusLocked === true),
+                        })
+                      }
+                      title={job.statusLocked ? "Otključaj automatske promene statusa" : "Zaključaj automatske promene statusa"}
+                    >
+                      {job.statusLocked ? (
+                        <>
+                          <Lock className="w-3.5 h-3.5 mr-1" />
+                          Status lock
+                        </>
+                      ) : (
+                        <>
+                          <Unlock className="w-3.5 h-3.5 mr-1" />
+                          Status auto
+                        </>
+                      )}
+                    </Button>
+                  )}
                   <OverduePaymentBadge job={job} />
                 </div>
                 <p className="text-base font-medium text-foreground">{job.customer.fullName}</p>
@@ -127,7 +157,7 @@ export default function JobDetailsPage() {
                   </span>
                   <span className="flex items-center gap-1"><Calendar className="w-3 h-3" /> Kreiran: {job.createdAt}</span>
                   {job.scheduledDate && <span className="flex items-center gap-1"><Calendar className="w-3 h-3" /> Zakazan: {job.scheduledDate}</span>}
-                  <span className="flex items-center gap-1"><MapPin className="w-3 h-3" /> {job.jobInstallationAddress || job.customer.installationAddress}</span>
+                  <span className="flex items-center gap-1"><MapPin className="w-3 h-3" /> {installationAddressDisplay}</span>
                 </div>
               </div>
               <div className="flex gap-2 shrink-0">
@@ -169,7 +199,7 @@ export default function JobDetailsPage() {
               { icon: Package, value: String(pendingMaterials.length), label: "Čeka materijal", color: pendingMaterials.length > 0 ? "text-warning" : "text-foreground" },
               { icon: ClipboardList, value: String(activeWorkOrders.length), label: "Aktivni nalozi", color: "text-info" },
               { icon: Calendar, value: job.scheduledDate || "—", label: "Zakazano", color: "text-foreground" },
-              { icon: MapPin, value: job.jobInstallationAddress || job.customer.installationAddress, label: "Lokacija", color: "text-foreground" },
+              { icon: MapPin, value: installationAddressDisplay, label: "Lokacija", color: "text-foreground" },
             ].map((kpi, i) => (
               <div key={i} className="bg-card rounded-lg border border-border p-3 text-center">
                 <kpi.icon className={`w-4 h-4 mx-auto mb-1 ${kpi.color}`} />
@@ -249,7 +279,7 @@ export default function JobDetailsPage() {
                       <MapPin className="w-4 h-4 text-primary" />
                       <h4 className="font-semibold text-foreground text-sm">Adresa ugradnje</h4>
                     </div>
-                    <p className="text-sm text-muted-foreground">{job.jobInstallationAddress || job.customer.installationAddress}</p>
+                    <p className="text-sm text-muted-foreground">{installationAddressDisplay}</p>
                   </div>
                 </div>
 
@@ -297,7 +327,7 @@ export default function JobDetailsPage() {
                       {pendingMaterials.map(m => (
                         <div key={m.id} className="flex items-center justify-between text-sm bg-muted/50 rounded-lg p-2.5">
                           <div className="flex items-center gap-2">
-                            <span className="font-medium capitalize">{m.materialType.replace("_", " ")}</span>
+                            <span className="font-medium">{labelMaterialType(m.materialType)}</span>
                             <span className="text-xs text-muted-foreground">— {m.supplier}</span>
                             <DelayedDeliveryBadge order={m} />
                           </div>

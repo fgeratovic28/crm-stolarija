@@ -1,5 +1,5 @@
-import { useState, useEffect, useMemo } from "react";
-import { useForm, useFieldArray } from "react-hook-form";
+import { useState, useEffect, useMemo, useRef } from "react";
+import { useForm, useFieldArray, useWatch } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
 import { z } from "zod";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger } from "@/components/ui/dialog";
@@ -7,15 +7,15 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
-import { Checkbox } from "@/components/ui/checkbox";
+import { Switch } from "@/components/ui/switch";
 import { Form, FormControl, FormField, FormItem, FormLabel, FormMessage } from "@/components/ui/form";
-import { Label } from "@/components/ui/label";
 import { Plus, UserPlus, Trash2 } from "lucide-react";
 import { toast } from "sonner";
 import { useJobs, type CreateJobInput, type UpdateJobInput, sumQuoteLineAmounts, computeJobAmountsFromLineSum } from "@/hooks/use-jobs";
 import { useCustomers } from "@/hooks/use-customers";
 import { useTeams } from "@/hooks/use-teams";
 import { formatCurrencyBySettings, readAppSettingsCache } from "@/lib/app-settings";
+import { getInstallationAddressForDisplay } from "@/lib/map-geocode";
 import { CustomerForm } from "@/components/shared/CustomerForm";
 import type { Job } from "@/types";
 
@@ -90,9 +90,24 @@ export function NewJobModal({ trigger, job }: NewJobModalProps) {
 
   const { fields, append, remove } = useFieldArray({ control: form.control, name: "lines" });
 
-  const selectedCustomerId = form.watch("customerId");
-  const watchedLines = form.watch("lines");
-  const watchedVat = form.watch("pricesIncludeVat");
+  const selectedCustomerId = useWatch({ control: form.control, name: "customerId" });
+  const watchedLines = useWatch({ control: form.control, name: "lines" });
+  const watchedVat = useWatch({ control: form.control, name: "pricesIncludeVat" });
+
+  /** Samo pri promeni izabranog klijenta (ne pri svakom refetch-u liste) — da korisnik može drugačiju adresu za posao. */
+  const lastPrefilledCustomerIdRef = useRef<string | null>(null);
+
+  useEffect(() => {
+    if (!open) {
+      lastPrefilledCustomerIdRef.current = null;
+      return;
+    }
+    if (job?.customer?.id) {
+      lastPrefilledCustomerIdRef.current = job.customer.id;
+    } else {
+      lastPrefilledCustomerIdRef.current = null;
+    }
+  }, [open, job?.id, job?.customer?.id]);
 
   const pricingPreview = useMemo(() => {
     const sum = sumQuoteLineAmounts(
@@ -105,14 +120,16 @@ export function NewJobModal({ trigger, job }: NewJobModalProps) {
   }, [watchedLines, watchedVat]);
 
   useEffect(() => {
-    if (selectedCustomerId) {
-      const customer = customers.find((c) => c.id === selectedCustomerId);
-      if (customer) {
-        form.setValue("billingAddress", customer.billingAddress);
-        form.setValue("installationAddress", customer.installationAddress);
-        form.setValue("customerPhone", customer.phones[0] || "");
-      }
-    }
+    if (!selectedCustomerId) return;
+    if (lastPrefilledCustomerIdRef.current === selectedCustomerId) return;
+
+    const customer = customers.find((c) => c.id === selectedCustomerId);
+    if (!customer) return;
+
+    form.setValue("billingAddress", customer.billingAddress);
+    form.setValue("installationAddress", customer.installationAddress);
+    form.setValue("customerPhone", customer.phones[0] || "");
+    lastPrefilledCustomerIdRef.current = selectedCustomerId;
   }, [selectedCustomerId, customers, form]);
 
   const onSubmit = (data: NewJobValues) => {
@@ -180,7 +197,7 @@ export function NewJobModal({ trigger, job }: NewJobModalProps) {
         : [{ description: "", quantity: 1, unitPrice: 0 }],
       advancePayment: Number(job.advancePayment) || 0,
       billingAddress: job.jobBillingAddress || job.customer.billingAddress || "",
-      installationAddress: job.jobInstallationAddress || job.customer.installationAddress || "",
+      installationAddress: getInstallationAddressForDisplay(job) || "",
       customerPhone: job.customerPhone || job.customer.phones?.[0] || "",
       assignedTeamId: "",
     });
@@ -199,7 +216,7 @@ export function NewJobModal({ trigger, job }: NewJobModalProps) {
           </Button>
         )}
       </DialogTrigger>
-      <DialogContent className="max-w-2xl max-h-[90vh] overflow-y-auto">
+      <DialogContent className="w-full sm:max-w-2xl">
         <DialogHeader>
           <DialogTitle>{job ? `Izmena posla ${job.jobNumber}` : "Kreiranje novog posla"}</DialogTitle>
         </DialogHeader>
@@ -212,12 +229,12 @@ export function NewJobModal({ trigger, job }: NewJobModalProps) {
             })}
             className="space-y-4"
           >
-            <div className="flex gap-2 items-end">
+            <div className="flex flex-col gap-3 sm:flex-row sm:items-end sm:gap-2 min-w-0">
               <FormField
                 control={form.control}
                 name="customerId"
                 render={({ field }) => (
-                  <FormItem className="flex-1">
+                  <FormItem className="min-w-0 flex-1">
                     <FormLabel>Kupac (klijent)</FormLabel>
                     <Select onValueChange={field.onChange} value={field.value}>
                       <FormControl>
@@ -237,7 +254,7 @@ export function NewJobModal({ trigger, job }: NewJobModalProps) {
                   </FormItem>
                 )}
               />
-              <Button type="button" variant="outline" className="mb-0.5" onClick={() => setCustomerModalOpen(true)}>
+              <Button type="button" variant="outline" className="mb-0.5 w-full shrink-0 sm:w-auto" onClick={() => setCustomerModalOpen(true)}>
                 <UserPlus className="w-4 h-4 mr-1.5" /> Novi klijent
               </Button>
             </div>
@@ -343,7 +360,7 @@ export function NewJobModal({ trigger, job }: NewJobModalProps) {
                           <FormItem>
                             <FormLabel className="text-xs text-muted-foreground">{`Jed. cena (${appSettings.currency})`}</FormLabel>
                             <FormControl>
-                              <Input type="number" min={0} step="1" {...f} />
+                              <Input type="number" min={0} step="0.01" {...f} />
                             </FormControl>
                             <FormMessage />
                           </FormItem>
@@ -381,18 +398,23 @@ export function NewJobModal({ trigger, job }: NewJobModalProps) {
               name="pricesIncludeVat"
               render={({ field }) => (
                 <FormItem className="border border-border rounded-lg p-3 bg-muted/20">
-                  <div className="flex items-start gap-2">
-                    <FormControl>
-                      <Checkbox id="prices-include-vat" checked={field.value} onCheckedChange={(v) => field.onChange(v === true)} />
-                    </FormControl>
-                    <div className="space-y-1">
-                      <Label htmlFor="prices-include-vat" className="cursor-pointer">
+                  <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between sm:gap-4">
+                    <div className="min-w-0 space-y-1">
+                      <FormLabel htmlFor="prices-include-vat" className="cursor-pointer">
                         Dodaj PDV 20% na stavke
-                      </Label>
+                      </FormLabel>
                       <p className="text-xs text-muted-foreground">
-                        Ako je čekirano, PDV 20% se dodaje na zbir stavki.
+                        Ako je uključeno, PDV 20% se dodaje na zbir stavki.
                       </p>
                     </div>
+                    <FormControl className="shrink-0 sm:pt-0.5">
+                      <Switch
+                        id="prices-include-vat"
+                        checked={field.value}
+                        onCheckedChange={field.onChange}
+                        aria-label="Uključi ili isključi PDV"
+                      />
+                    </FormControl>
                   </div>
                   <div className="mt-3 pt-3 border-t border-border text-xs text-muted-foreground leading-relaxed">
                     Osnovica {formatCurrency(pricingPreview.priceWithoutVat)} · PDV 20% {formatCurrency(pricingPreview.vatAmount)} ·{" "}
@@ -424,8 +446,15 @@ export function NewJobModal({ trigger, job }: NewJobModalProps) {
                 <FormItem>
                   <FormLabel>Adresa ugradnje (za ovaj posao)</FormLabel>
                   <FormControl>
-                    <Input placeholder="Ulica, Grad, Poštanski broj" {...field} />
+                    <Input
+                      placeholder="Npr. Bulevar kralja Aleksandra 73, Beograd"
+                      {...field}
+                    />
                   </FormControl>
+                  <p className="text-xs text-muted-foreground leading-snug">
+                    Za mapu unesite što precizniju adresu: ulica i broj, naselje, grad/opština (izbegavajte skraćenice ako
+                    može).
+                  </p>
                   <FormMessage />
                 </FormItem>
               )}
@@ -460,7 +489,7 @@ export function NewJobModal({ trigger, job }: NewJobModalProps) {
             />
 
 
-            <div className="flex justify-end gap-2 pt-2">
+            <div className="flex flex-col-reverse gap-2 pt-2 sm:flex-row sm:justify-end sm:gap-2 [&>button]:w-full sm:[&>button]:w-auto">
               <Button type="button" variant="outline" onClick={() => setOpen(false)}>
                 Otkaži
               </Button>
@@ -473,7 +502,7 @@ export function NewJobModal({ trigger, job }: NewJobModalProps) {
       </DialogContent>
 
       <Dialog open={customerModalOpen} onOpenChange={setCustomerModalOpen}>
-        <DialogContent className="max-w-3xl max-h-[90vh] overflow-y-auto">
+        <DialogContent className="w-full sm:max-w-3xl">
           <DialogHeader>
             <DialogTitle>Novi klijent</DialogTitle>
           </DialogHeader>

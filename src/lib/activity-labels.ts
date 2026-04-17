@@ -1,0 +1,66 @@
+import type { FileCategory, JobStatus, MaterialOrder, WorkOrder, WorkOrderType } from "@/types";
+
+const JOB_STATUS_LABELS: Record<JobStatus, string> = {
+  new: "Novi",
+  active: "Aktivan",
+  in_progress: "U toku",
+  waiting_materials: "Čeka materijal",
+  scheduled: "Zakazan",
+  completed: "Završen",
+  complaint: "Reklamacija",
+  service: "Servis",
+};
+
+const WORK_ORDER_TYPE_LABELS: Record<WorkOrderType, string> = {
+  measurement: "Merenje",
+  measurement_verification: "Kontrola mera",
+  installation: "Ugradnja",
+  complaint: "Reklamacija",
+  service: "Servis",
+  production: "Proizvodnja",
+  site_visit: "Terenska poseta",
+  control_visit: "Kontrolna poseta",
+};
+
+const WORK_ORDER_STATUS_LABELS: Record<WorkOrder["status"], string> = {
+  pending: "Čeka",
+  in_progress: "U toku",
+  completed: "Završen",
+  canceled: "Otkazan",
+};
+
+const MATERIAL_TYPE_LABELS: Record<MaterialOrder["materialType"], string> = {
+  glass: "Staklo",
+  mosquito_net: "Komarnik",
+  profile: "Profil",
+  shutters: "Roletne",
+  sills: "Okapnice",
+  boards: "Daske",
+  hardware: "Okov",
+  sealant: "Zaptivna masa",
+  other: "Ostalo",
+};
+
+const DELIVERY_STATUS_LABELS: Record<MaterialOrder["deliveryStatus"], string> = {
+  pending: "Na čekanju",
+  shipped: "Poslato",
+  delivered: "Isporučeno",
+  partial: "Delimično isporučeno",
+};
+
+const FILE_CATEGORY_LABELS: Record<FileCategory, string> = {
+  offers: "Ponude",
+  communication: "Komunikacija",
+  finance: "Finansije",
+  supplier: "Dobavljač",
+  work_order: "Radni nalog",
+  field_photos: "Terenske fotografije",
+  reports: "Izveštaji",
+};
+
+export const labelJobStatus = (status: JobStatus | string) => JOB_STATUS_LABELS[status as JobStatus] ?? status;
+export const labelWorkOrderType = (type: WorkOrderType | string) => WORK_ORDER_TYPE_LABELS[type as WorkOrderType] ?? type;
+export const labelWorkOrderStatus = (status: WorkOrder["status"] | string) => WORK_ORDER_STATUS_LABELS[status as WorkOrder["status"]] ?? status;
+export const labelMaterialType = (type: MaterialOrder["materialType"] | string) => MATERIAL_TYPE_LABELS[type as MaterialOrder["materialType"]] ?? type;
+export const labelDeliveryStatus = (status: MaterialOrder["deliveryStatus"] | string) => DELIVERY_STATUS_LABELS[status as MaterialOrder["deliveryStatus"]] ?? status;
+export const labelFileCategory = (category: FileCategory | string) => FILE_CATEGORY_LABELS[category as FileCategory] ?? category;

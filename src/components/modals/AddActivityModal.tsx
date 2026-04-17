@@ -96,7 +96,7 @@ export function AddActivityModal({ trigger, jobId: propJobId }: AddActivityModal
       <DialogTrigger asChild>
         {trigger || <Button size="sm"><Plus className="w-4 h-4 mr-1" /> Dodaj aktivnost</Button>}
       </DialogTrigger>
-      <DialogContent className="max-w-lg">
+      <DialogContent className="w-full sm:max-w-lg">
         <DialogHeader>
           <DialogTitle>Dodavanje aktivnosti</DialogTitle>
         </DialogHeader>
@@ -165,7 +165,7 @@ export function AddActivityModal({ trigger, jobId: propJobId }: AddActivityModal
               </div>
             </div>
 
-            <div className="flex justify-end gap-2 pt-2">
+            <div className="flex flex-col-reverse gap-2 pt-2 sm:flex-row sm:justify-end [&>button]:w-full sm:[&>button]:w-auto">
               <Button type="button" variant="outline" onClick={() => setOpen(false)}>Otkaži</Button>
               <Button type="submit" disabled={addActivity.isPending || uploadFile.isPending}>
                 {addActivity.isPending || uploadFile.isPending ? (

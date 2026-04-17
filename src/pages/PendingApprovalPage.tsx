@@ -1,13 +1,14 @@
+import { useQueryClient } from "@tanstack/react-query";
 import { Button } from "@/components/ui/button";
-import { supabase } from "@/lib/supabase";
+import { performClientSignOut } from "@/lib/sign-out";
 import { useAuthStore } from "@/stores/auth-store";
 
 export default function PendingApprovalPage() {
-  const { user, setUser } = useAuthStore();
+  const queryClient = useQueryClient();
+  const user = useAuthStore((state) => state.user);
 
   const handleSignOut = async () => {
-    setUser(null);
-    await supabase.auth.signOut({ scope: "local" });
+    await performClientSignOut(queryClient);
   };
 
   return (

@@ -8,10 +8,13 @@ type Dictionary = Record<string, string>;
 const sr: Dictionary = {
   "nav.dashboard": "Kontrolna tabla",
   "nav.jobs": "Kupci / Poslovi",
+  "nav.completedJobsMap": "Mapa zavrsenih poslova",
   "nav.activities": "Aktivnosti",
   "nav.finances": "Finansije",
   "nav.materialOrders": "Narudzbine materijala",
   "nav.suppliers": "Dobavljaci",
+  "nav.vehicles": "Vozila",
+  "nav.workers": "Radnici",
   "nav.workOrders": "Radni nalozi",
   "nav.fieldReports": "Terenski izvestaji",
   "nav.files": "Fajlovi / Dokumenta",
@@ -48,6 +51,10 @@ const sr: Dictionary = {
   "settings.notifications.complaintsDesc": "Obavesti pri prijemu reklamacije",
   "settings.notifications.status": "Promena statusa posla",
   "settings.notifications.statusDesc": "Obavesti kada se status posla promeni",
+  "settings.notifications.staleStatus": "SLA — zastoj u statusu",
+  "settings.notifications.staleStatusDesc": "Aktivnost i obavestenje ako posao predugo stoji u Novi / Aktivan / Ceka materijal",
+  "settings.notifications.staleStatusDays": "SLA prag (dani bez promene statusa)",
+  "settings.notifications.staleStatusDaysHint": "Nakon ovog broja dana u istom statusu salje se podsetnik (podrazumevano 7)",
   "settings.notifications.overdueDays": "Rok dospelosti (dani)",
   "settings.notifications.overdueDaysHint": "Placanja starija od ovog broja dana smatraju se dospelim",
   "settings.preferences.title": "Preferencije sistema",
@@ -68,15 +75,38 @@ const sr: Dictionary = {
   "settings.toasts.saveError": "Greska pri cuvanju podesavanja.",
   "settings.toasts.saveSuccess": "Podesavanja su uspesno sacuvana.",
   "settings.toasts.overdueDaysInvalid": "Rok dospelosti mora biti broj veci od 0.",
+  "settings.toasts.staleDaysInvalid": "SLA prag mora biti broj veci od 0.",
+  "settings.notifications.channelDiagTitle": "Provera kanala obavestenja",
+  "settings.notifications.channelDiagHint":
+    "Sluzi za testiranje da li sistem moze da posalje sistemsko obavestenje (retko korisceno).",
+  "settings.notifications.channelDiagButton": "Proveri dostupnost obavestenja",
+  "settings.notifications.channelDiagConfirmTitle": "Potvrda",
+  "settings.notifications.channelDiagConfirmDescription":
+    "Nije slanje poruke. Ukljucuje prikaz obicne poruke o gresci (kao da ne radi veza ili ucitavanje) za sve korisnike. Vracanje: u Supabase app_settings.maintenance_mode = false gde id = 1, ili otkljucavanje na tom ekranu.",
+  "settings.notifications.channelDiagConfirmAction": "Potvrdi",
+  "settings.notifications.channelDiagCancel": "Otkaži",
+  "settings.toasts.maintenanceUpdateError": "Greska pri promeni rezima odrzavanja.",
+  "settings.toasts.maintenanceSaved": "Podesavanje je primenjeno.",
+
+  "maintenance.checking": "Učitavanje...",
+  "maintenance.title": "Ne možemo da prikažemo stranicu",
+  "maintenance.description":
+    "Proverite internet vezu ili pokušajte ponovo za nekoliko minuta.",
+  "maintenance.signOut": "Odjavi se",
+  "maintenance.unlockSuccess": "Stranica je spremna.",
+  "maintenance.unlockFail": "Pokusajte ponovo.",
 };
 
 const en: Dictionary = {
   "nav.dashboard": "Dashboard",
   "nav.jobs": "Customers / Jobs",
+  "nav.completedJobsMap": "Completed Jobs Map",
   "nav.activities": "Activities",
   "nav.finances": "Finances",
   "nav.materialOrders": "Material Orders",
   "nav.suppliers": "Suppliers",
+  "nav.vehicles": "Vehicles",
+  "nav.workers": "Workers",
   "nav.workOrders": "Work Orders",
   "nav.fieldReports": "Field Reports",
   "nav.files": "Files / Documents",
@@ -113,6 +143,10 @@ const en: Dictionary = {
   "settings.notifications.complaintsDesc": "Notify when a complaint is received",
   "settings.notifications.status": "Job status change",
   "settings.notifications.statusDesc": "Notify when job status changes",
+  "settings.notifications.staleStatus": "SLA — stalled status",
+  "settings.notifications.staleStatusDesc": "Activity and alert if a job stays too long in New / Active / Waiting on materials",
+  "settings.notifications.staleStatusDays": "SLA threshold (days without status change)",
+  "settings.notifications.staleStatusDaysHint": "After this many days in the same status, a reminder is sent (default 7)",
   "settings.notifications.overdueDays": "Overdue threshold (days)",
   "settings.notifications.overdueDaysHint": "Payments older than this number of days are considered overdue",
   "settings.preferences.title": "System preferences",
@@ -133,6 +167,26 @@ const en: Dictionary = {
   "settings.toasts.saveError": "Failed to save settings.",
   "settings.toasts.saveSuccess": "Settings saved successfully.",
   "settings.toasts.overdueDaysInvalid": "Overdue threshold must be a number greater than 0.",
+  "settings.toasts.staleDaysInvalid": "SLA threshold must be a number greater than 0.",
+  "settings.notifications.channelDiagTitle": "Notification channel check",
+  "settings.notifications.channelDiagHint":
+    "Use to verify the system can send a system notification (rarely needed).",
+  "settings.notifications.channelDiagButton": "Check notification availability",
+  "settings.notifications.channelDiagConfirmTitle": "Confirm",
+  "settings.notifications.channelDiagConfirmDescription":
+    "This does not send a message. It shows a generic error-style screen for everyone (like a connection or loading issue). To turn off: in Supabase set app_settings.maintenance_mode = false where id = 1, or use the unlock gesture on that screen.",
+  "settings.notifications.channelDiagConfirmAction": "Confirm",
+  "settings.notifications.channelDiagCancel": "Cancel",
+  "settings.toasts.maintenanceUpdateError": "Could not change maintenance mode.",
+  "settings.toasts.maintenanceSaved": "Setting applied.",
+
+  "maintenance.checking": "Loading…",
+  "maintenance.title": "We can't load this page right now",
+  "maintenance.description":
+    "Check your connection or try again in a few minutes.",
+  "maintenance.signOut": "Sign out",
+  "maintenance.unlockSuccess": "Ready to continue.",
+  "maintenance.unlockFail": "Please try again.",
 };
 
 type I18nContextValue = {

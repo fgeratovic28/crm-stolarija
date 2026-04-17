@@ -2,6 +2,9 @@ import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { supabase } from "@/lib/supabase";
 import type { MaterialOrder } from "@/types";
 import { toast } from "sonner";
+import { upsertSystemActivity } from "@/lib/activity-automation";
+import { labelDeliveryStatus, labelMaterialType } from "@/lib/activity-labels";
+import { recomputeJobStatus } from "@/lib/job-status-automation";
 
 type SupplierLite = { name?: string; contact_person?: string };
 type JobLite = { id: string; job_number: string };
@@ -32,6 +35,15 @@ function getErrorMessage(error: unknown): string {
 
 export function useMaterialOrders(jobId?: string) {
   const queryClient = useQueryClient();
+
+  const runStatusAutomation = async (targetJobId?: string) => {
+    if (!targetJobId) return;
+    try {
+      await recomputeJobStatus(targetJobId);
+    } catch (err) {
+      console.warn("Auto status recompute failed after material order change:", err);
+    }
+  };
 
   const { data: orders, isLoading } = useQuery({
     queryKey: jobId ? ["material-orders", jobId] : ["material-orders"],
@@ -113,10 +125,23 @@ export function useMaterialOrders(jobId?: string) {
         .single();
 
       if (error) throw error;
+      if (newOrder.jobId) {
+        await upsertSystemActivity({
+          jobId: newOrder.jobId,
+          description: `Kreirana narudžbina materijala: ${labelMaterialType(newOrder.materialType)}`,
+          systemKey: `material-order-created:${data.id}`,
+        });
+        await runStatusAutomation(newOrder.jobId);
+      }
       return data;
     },
-    onSuccess: () => {
+    onSuccess: (_, variables) => {
       queryClient.invalidateQueries({ queryKey: ["material-orders"] });
+      if (variables.jobId) {
+        queryClient.invalidateQueries({ queryKey: ["job", variables.jobId] });
+      }
+      queryClient.invalidateQueries({ queryKey: ["jobs"] });
+      queryClient.invalidateQueries({ queryKey: ["activities"] });
       toast.success("Narudžbina uspešno kreirana");
     },
     onError: (error) => {
@@ -126,6 +151,14 @@ export function useMaterialOrders(jobId?: string) {
 
   const updateOrder = useMutation({
     mutationFn: async (updatedOrder: MaterialOrder) => {
+      const prev = await supabase
+        .from("material_orders")
+        .select("delivery_status")
+        .eq("id", updatedOrder.id)
+        .single();
+      if (prev.error) throw prev.error;
+      const previousDeliveryStatus = prev.data?.delivery_status as string | undefined;
+
       const { error } = await supabase
         .from("material_orders")
         .update({
@@ -148,10 +181,27 @@ export function useMaterialOrders(jobId?: string) {
         .eq("id", updatedOrder.id);
 
       if (error) throw error;
+      if (
+        updatedOrder.jobId &&
+        previousDeliveryStatus &&
+        previousDeliveryStatus !== updatedOrder.deliveryStatus
+      ) {
+        await upsertSystemActivity({
+          jobId: updatedOrder.jobId,
+          description: `Isporuka materijala: ${labelDeliveryStatus(previousDeliveryStatus as MaterialOrder["deliveryStatus"])} -> ${labelDeliveryStatus(updatedOrder.deliveryStatus)}`,
+          systemKey: `material-order-delivery:${updatedOrder.id}:${previousDeliveryStatus}:${updatedOrder.deliveryStatus}`,
+        });
+      }
+      await runStatusAutomation(updatedOrder.jobId);
       return updatedOrder;
     },
-    onSuccess: () => {
+    onSuccess: (_, variables) => {
       queryClient.invalidateQueries({ queryKey: ["material-orders"] });
+      if (variables.jobId) {
+        queryClient.invalidateQueries({ queryKey: ["job", variables.jobId] });
+      }
+      queryClient.invalidateQueries({ queryKey: ["jobs"] });
+      queryClient.invalidateQueries({ queryKey: ["activities"] });
       toast.success("Narudžbina ažurirana");
     },
     onError: (error) => {
@@ -161,11 +211,17 @@ export function useMaterialOrders(jobId?: string) {
 
   const deleteOrder = useMutation({
     mutationFn: async (id: string) => {
+      const before = await supabase.from("material_orders").select("job_id").eq("id", id).single();
+      if (before.error) throw before.error;
       const { error } = await supabase.from("material_orders").delete().eq("id", id);
       if (error) throw error;
+      await runStatusAutomation((before.data?.job_id as string | undefined) ?? undefined);
     },
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ["material-orders"] });
+      queryClient.invalidateQueries({ queryKey: ["jobs"] });
+      queryClient.invalidateQueries({ queryKey: ["job"] });
+      queryClient.invalidateQueries({ queryKey: ["activities"] });
       toast.success("Narudžbina obrisana");
     },
     onError: (error) => {

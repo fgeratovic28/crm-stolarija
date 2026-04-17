@@ -62,7 +62,7 @@ export function ExportModal({ open, onOpenChange }: ExportModalProps) {
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className="sm:max-w-md">
+      <DialogContent className="w-full sm:max-w-md">
         <DialogHeader>
           <DialogTitle>Izvoz finansijskog izveštaja</DialogTitle>
         </DialogHeader>
@@ -116,7 +116,7 @@ export function ExportModal({ open, onOpenChange }: ExportModalProps) {
           </div>
 
           {/* Date range */}
-          <div className="grid grid-cols-2 gap-3">
+          <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
             <div className="space-y-1.5">
               <Label className="text-xs font-medium text-muted-foreground">Datum od</Label>
               <Popover>
@@ -148,18 +148,18 @@ export function ExportModal({ open, onOpenChange }: ExportModalProps) {
           </div>
 
           {/* Summary */}
-          <div className="bg-muted/50 rounded-lg px-3 py-2 text-sm text-muted-foreground flex justify-between items-center">
+          <div className="flex flex-col gap-2 rounded-lg bg-muted/50 px-3 py-2 text-sm text-muted-foreground sm:flex-row sm:items-center sm:justify-between">
             <span>Pronađeno poslova: <strong className="text-foreground">{filteredJobs.length}</strong></span>
             {(status !== "all" || customer !== "all" || dateFrom || dateTo) && (
-              <Button variant="ghost" size="sm" className="h-7 text-xs" onClick={resetFilters}>Poništi filtere</Button>
+              <Button variant="ghost" size="sm" className="h-7 w-full shrink-0 text-xs sm:w-auto" onClick={resetFilters}>Poništi filtere</Button>
             )}
           </div>
         </div>
 
         {/* Actions */}
-        <div className="flex gap-2 pt-2">
+        <div className="flex flex-col gap-2 pt-2 sm:flex-row">
           <Button
-            className="flex-1"
+            className="w-full sm:flex-1"
             variant="outline"
             onClick={() => handleExport("csv")}
             disabled={jobsLoading || !!jobsError || filteredJobs.length === 0}
@@ -167,7 +167,7 @@ export function ExportModal({ open, onOpenChange }: ExportModalProps) {
             <Download className="w-4 h-4 mr-1.5" />CSV izvoz
           </Button>
           <Button
-            className="flex-1"
+            className="w-full sm:flex-1"
             onClick={() => handleExport("pdf")}
             disabled={jobsLoading || !!jobsError || filteredJobs.length === 0}
           >

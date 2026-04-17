@@ -1,7 +1,7 @@
 import { DollarSign } from "lucide-react";
 import { StatCard } from "@/components/shared/StatCard";
-import { SectionHeader } from "@/components/shared/SectionHeader";
 import { EmptyState } from "@/components/shared/EmptyState";
+import { Badge } from "@/components/ui/badge";
 import { RecordPaymentModal } from "@/components/modals/RecordPaymentModal";
 import { useRole } from "@/contexts/RoleContext";
 import { formatCurrencyBySettings } from "@/lib/app-settings";
@@ -23,11 +23,20 @@ export function FinancesTab({ job, payments }: { job: Job; payments: Payment[] }
         <StatCard title="Ukupno (sa PDV-om)" value={formatCurrency(job.totalPrice)} icon={DollarSign} />
         <StatCard title="Preostalo" value={formatCurrency(remainingBalance)} icon={DollarSign} />
       </div>
-      <p className="text-xs text-muted-foreground">
-        {job.pricesIncludeVat
-          ? "Jedinične cene stavki ponude bile su sa uključenim PDV-om; osnovica i PDV su izračunati od ukupnog iznosa."
-          : "Jedinične cene stavki ponude bile su bez PDV-a; PDV 20% je dodat na zbir stavki da bi se dobio iznos za naplatu."}
-      </p>
+      <div className="flex flex-col sm:flex-row sm:items-start gap-2 sm:gap-3">
+        <Badge
+          variant={job.pricesIncludeVat ? "secondary" : "outline"}
+          className="shrink-0 w-fit"
+          title={job.pricesIncludeVat ? "Stavke ponude sa PDV-om" : "Stavke ponude bez PDV-a"}
+        >
+          {job.pricesIncludeVat ? "Ponuda: sa PDV-om" : "Ponuda: bez PDV-a"}
+        </Badge>
+        <p className="text-xs text-muted-foreground leading-relaxed">
+          {job.pricesIncludeVat
+            ? "Jedinične cene stavki ponude bile su sa uključenim PDV-om; osnovica i PDV su izračunati od ukupnog iznosa."
+            : "Jedinične cene stavki ponude bile su bez PDV-a; PDV 20% je dodat na zbir stavki da bi se dobio iznos za naplatu."}
+        </p>
+      </div>
 
       <div className="bg-card rounded-xl border border-border">
         <div className="p-4 sm:p-5 border-b border-border flex flex-col sm:flex-row sm:items-center justify-between gap-2">
@@ -61,7 +70,15 @@ export function FinancesTab({ job, payments }: { job: Job; payments: Payment[] }
                   <tr key={p.id} className="border-b border-border last:border-0">
                     <td className="px-4 sm:px-5 py-3 text-sm">{p.date}</td>
                     <td className="px-4 sm:px-5 py-3 text-sm font-medium">{formatCurrency(p.amount)}</td>
-                    <td className="px-4 sm:px-5 py-3 text-sm text-muted-foreground hidden sm:table-cell">{p.includesVat ? "Sa PDV-om" : "Bez PDV-a"}</td>
+                    <td className="px-4 sm:px-5 py-3 hidden sm:table-cell">
+                      <Badge
+                        variant={p.includesVat ? "secondary" : "outline"}
+                        className="font-normal"
+                        title={p.includesVat ? "Uplata evidentirana kao sa uključenim PDV-om" : "Uplata evidentirana kao bez PDV-a"}
+                      >
+                        {p.includesVat ? "Sa PDV-om" : "Bez PDV-a"}
+                      </Badge>
+                    </td>
                     <td className="px-4 sm:px-5 py-3 text-sm text-muted-foreground">{p.note || "—"}</td>
                   </tr>
                 ))}

@@ -214,7 +214,7 @@ export function NewFieldReportModal({ open, onOpenChange, workOrderId }: NewFiel
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className="sm:max-w-lg max-h-[90vh] overflow-y-auto">
+      <DialogContent className="w-full sm:max-w-lg">
         <DialogHeader>
           <DialogTitle className="flex items-center gap-2">
             <MapPin className="w-5 h-5 text-primary" />
@@ -267,7 +267,7 @@ export function NewFieldReportModal({ open, onOpenChange, workOrderId }: NewFiel
             </Popover>
           </div>
 
-          <div className="grid grid-cols-2 gap-3">
+          <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
             <div className="flex items-center justify-between bg-muted/30 rounded-lg p-3">
               <Label className="text-sm cursor-pointer" htmlFor="arrived">Stigao na teren</Label>
               <Switch id="arrived" checked={arrived} onCheckedChange={setArrived} />
@@ -281,7 +281,7 @@ export function NewFieldReportModal({ open, onOpenChange, workOrderId }: NewFiel
               <Switch id="ok" checked={everythingOk} onCheckedChange={setEverythingOk} />
             </div>
             {reportVariant === "field" && (
-              <div className="flex items-center justify-between bg-muted/30 rounded-lg p-3">
+              <div className="flex items-center justify-between bg-muted/30 rounded-lg p-3 sm:col-span-2">
                 <Label className="text-sm cursor-pointer" htmlFor="canceled">Teren otkazan</Label>
                 <Switch id="canceled" checked={siteCanceled} onCheckedChange={setSiteCanceled} />
               </div>
@@ -306,7 +306,7 @@ export function NewFieldReportModal({ open, onOpenChange, workOrderId }: NewFiel
             <Label className="text-xs font-medium text-muted-foreground">
               {reportVariant === "mounting" ? "Slike i dokumentacija predaje" : "Slike sa terena"}
             </Label>
-            <div className="grid grid-cols-4 gap-2 mb-2">
+            <div className="mb-2 grid grid-cols-3 gap-2 sm:grid-cols-4">
               {images.map((img, i) => (
                 <div key={i} className="relative aspect-square rounded-md overflow-hidden group">
                   <img src={img} alt="Teren" className="w-full h-full object-cover" />
@@ -334,7 +334,7 @@ export function NewFieldReportModal({ open, onOpenChange, workOrderId }: NewFiel
 
           <div className="space-y-1.5">
             <Label className="text-xs font-medium text-muted-foreground">Šta nije u redu / nedostaje</Label>
-            <div className="grid grid-cols-2 gap-2">
+            <div className="grid grid-cols-1 gap-2 sm:grid-cols-2">
               {missingItemOptions.map((item) => (
                 <label key={item} className="flex items-center gap-2 text-sm bg-muted/30 rounded-lg px-3 py-2">
                   <Checkbox
@@ -361,7 +361,7 @@ export function NewFieldReportModal({ open, onOpenChange, workOrderId }: NewFiel
             </div>
             {needsAdditionalItems && (
               <>
-            <div className="grid grid-cols-2 gap-2">
+            <div className="grid grid-cols-1 gap-2 sm:grid-cols-2">
               {additionalNeedOptions.map((item) => (
                 <label key={item} className="flex items-center gap-2 text-sm bg-muted/30 rounded-lg px-3 py-2">
                   <Checkbox

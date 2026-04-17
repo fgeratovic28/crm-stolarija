@@ -2,8 +2,14 @@ import { supabase } from "@/lib/supabase";
 import { fetchJobsList } from "@/hooks/use-jobs";
 import { formatCurrencyBySettings, formatDateBySettings, readAppSettingsCache } from "@/lib/app-settings";
 import type { Job, MaterialOrder, WorkOrder } from "@/types";
+import { labelJobStatus, labelMaterialType } from "@/lib/activity-labels";
 
-export type NotificationType = "overdue_payment" | "material_delivery" | "upcoming_installation" | "complaint";
+export type NotificationType =
+  | "overdue_payment"
+  | "material_delivery"
+  | "upcoming_installation"
+  | "complaint"
+  | "stale_job_status";
 export type NotificationPriority = "high" | "medium" | "low";
 
 export interface Notification {
@@ -141,7 +147,7 @@ function generateNotifications(
           id: `notif-mat-${m.id}`,
           type: "material_delivery",
           title: isLate ? "Isporuka kasni" : "Isporuka stiže uskoro",
-          description: `${String(m.materialType).replace("_", " ")} od ${m.supplier} — očekivano ${
+          description: `${labelMaterialType(String(m.materialType))} od ${m.supplier} — očekivano ${
             expected ? formatDateBySettings(expected) : "N/A"
           }`,
           priority: isLate ? "high" : "low",
@@ -186,10 +192,35 @@ function generateNotifications(
     });
   }
 
+  if (settings.notifStaleJobStatus) {
+    const threshold = settings.jobStaleStatusDays;
+    const slaStatuses = new Set<Job["status"]>(["new", "active", "waiting_materials"]);
+    jobs
+      .filter((j) => slaStatuses.has(j.status) && j.statusLocked !== true)
+      .forEach((j) => {
+        const anchorStr = j.statusChangedAt ?? j.createdAt;
+        const days = Math.floor((Date.now() - new Date(anchorStr).getTime()) / 86400000);
+        if (days < threshold) return;
+        notifications.push({
+          id: `notif-sla-${j.id}`,
+          type: "stale_job_status",
+          title: "SLA: zastoj u statusu",
+          description: `${j.jobNumber} — ${labelJobStatus(j.status)} bez promene statusa ${days} dana (od ${formatDateBySettings(anchorStr)})`,
+          priority: days >= threshold * 2 ? "high" : "medium",
+          timestamp: anchorStr,
+          read: false,
+          jobId: j.id,
+          jobNumber: j.jobNumber,
+        });
+      });
+  }
+
   return notifications.sort((a, b) => new Date(b.timestamp).getTime() - new Date(a.timestamp).getTime());
 }
 
 export async function fetchNotifications(): Promise<Notification[]> {
+  await supabase.rpc("run_job_sla_stale_reminders");
+
   const [jobs, materialOrders, workOrders] = await Promise.all([
     fetchJobsList(),
     fetchMaterialOrdersForNotifications(),

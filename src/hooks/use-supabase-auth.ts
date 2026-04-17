@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useRef } from "react";
+import { useQueryClient } from "@tanstack/react-query";
 import type { Session } from "@supabase/supabase-js";
 import { authStorageKey, persistAuthSession, supabase } from "@/lib/supabase";
 import { useAuthStore } from "@/stores/auth-store";
@@ -7,6 +8,8 @@ import { AppUser, UserRole } from "@/types";
 
 /** Koliko čekati getSession pre drugog pokušaja / predaje (bez refreshSession petlje). */
 const SESSION_RESOLVE_MS = 12_000;
+/** Ako se hidracija zaglavi (lock / SW / iOS), ipak pusti UI — inače ostaje „Provera sesije…”. */
+const AUTH_READY_WATCHDOG_MS = 10_000;
 /** Profil iz DB ne sme blokirati authReady niti UI beskonačno. */
 const PROFILE_FETCH_MS = 10_000;
 /** Debounce za evente (focus/visibility/online) da izbegnemo duple getSession pozive. */
@@ -90,8 +93,10 @@ async function getSessionForHydrate(): Promise<{
 function appUserFromSessionFallback(session: Session): AppUser {
   const u = session.user;
   const meta = u.user_metadata as Record<string, unknown> | undefined;
+  const fullNameFromMeta = typeof meta?.full_name === "string" ? meta.full_name.trim() : "";
   const nameFromMeta = typeof meta?.name === "string" ? meta.name.trim() : "";
   const name =
+    fullNameFromMeta ||
     nameFromMeta ||
     (typeof u.email === "string" && u.email.includes("@") ? u.email.split("@")[0] : "") ||
     "Korisnik";
@@ -114,7 +119,16 @@ function appUserFromSessionFallback(session: Session): AppUser {
 }
 
 export function useSupabaseAuth() {
+  const queryClient = useQueryClient();
   const { setUser, mergeUser, setAuthReady, setPendingApproval } = useAuthStore();
+
+  const clearQueryCacheOnLogout = useCallback(() => {
+    try {
+      queryClient.clear();
+    } catch {
+      /* ignore */
+    }
+  }, [queryClient]);
   const sessionEffectIdRef = useRef(0);
   const lastSessionRecheckAtRef = useRef(0);
   const sessionRecheckInFlightRef = useRef(false);
@@ -123,7 +137,7 @@ export function useSupabaseAuth() {
     try {
       const raced = await raceWithTimeout(
         (async () =>
-          supabase.from("users").select("*").eq("id", userId).single())(),
+          supabase.from("users").select("*").eq("id", userId).maybeSingle())(),
         PROFILE_FETCH_MS,
       );
       if (raced === null) {
@@ -147,7 +161,8 @@ export function useSupabaseAuth() {
         user: {
           id: data.id,
           email: data.email,
-          name: data.name,
+          name: (data.full_name as string | null) || data.name,
+          fullName: (data.full_name as string | null) || undefined,
           role: hasAssignedAppRole ? (dbRole as UserRole) : fallbackRole,
           active: true,
           teamId: data.team_id,
@@ -207,7 +222,7 @@ export function useSupabaseAuth() {
         /* ignore */
       }
     }
-  }, [fetchProfile, setUser]);
+  }, [fetchProfile, setPendingApproval, setUser]);
 
   /** Sinhrono postavi JWT korisnika pa u pozadini dovuci profil — authReady ne čeka mrežu. */
   const applySessionFastThenProfile = useCallback((session: Session | null, isActive: () => boolean) => {
@@ -242,7 +257,7 @@ export function useSupabaseAuth() {
         console.error("Background profile fetch failed:", e);
       }
     })();
-  }, [fetchProfile, setUser]);
+  }, [fetchProfile, setPendingApproval, setUser]);
 
   const revalidateAuthState = useCallback(
     async (isActive: () => boolean, source: string) => {
@@ -272,6 +287,7 @@ export function useSupabaseAuth() {
             if (invalidRefreshToken) {
               setPendingApproval(false);
               setUser(null);
+              clearQueryCacheOnLogout();
               await supabase.auth.signOut();
               return;
             }
@@ -288,7 +304,7 @@ export function useSupabaseAuth() {
         sessionRecheckInFlightRef.current = false;
       }
     },
-    [applySessionToStore, setPendingApproval, setUser],
+    [applySessionToStore, clearQueryCacheOnLogout, setPendingApproval, setUser],
   );
 
   useEffect(() => {
@@ -297,12 +313,19 @@ export function useSupabaseAuth() {
 
     setAuthReady(false);
 
+    const watchdog = window.setTimeout(() => {
+      if (!isActive()) return;
+      console.warn("Auth: watchdog — forsirano authReady (hidracija predugo traje)");
+      setAuthReady(true);
+    }, AUTH_READY_WATCHDOG_MS);
+
     const { data: { subscription } } = supabase.auth.onAuthStateChange(
       async (event, session) => {
         try {
           if (event === "INITIAL_SESSION") {
             if (session?.user && isActive()) {
-              await applySessionToStore(session, isActive);
+              // Ne await-uj ovde: await + fetch profila drži GoTrue lock i može blokirati paralelni getSession u hidraciji (PWA / resume).
+              void applySessionToStore(session, isActive);
             }
             // Namerno bez setUser(null) ovde — prazan INITIAL_SESSION ne sme da poništi uspešan getSession.
             return;
@@ -310,7 +333,7 @@ export function useSupabaseAuth() {
 
           if (event === "SIGNED_IN") {
             if (session?.user && isActive()) {
-              await applySessionToStore(session, isActive);
+              void applySessionToStore(session, isActive);
             }
             return;
           }
@@ -337,20 +360,29 @@ export function useSupabaseAuth() {
           if (event === "SIGNED_OUT") {
             // signOut() pre signInWithPassword emituje SIGNED_OUT; ako handler kasni posle SIGNED_IN,
             // naivno setUser(null) briše upravo ulogovanog korisnika. Čistimo store samo ako stvarno nema sesije.
+            // getSession unutar ovog callback-a ne sme biti await direktno — GoTrue lock + signOut() = deadlock
+            // (vidi Supabase „onAuthStateChange” napomenu). Odloži proveru van callback steka.
             if (!isActive()) return;
-            try {
-              const { data: { session: s } } = await getSessionResilient();
-              if (!isActive()) return;
-              if (!s?.user) {
-                setPendingApproval(false);
-                setUser(null);
-              }
-            } catch {
-              if (isActive()) {
-                setPendingApproval(false);
-                setUser(null);
-              }
-            }
+            setTimeout(() => {
+              void (async () => {
+                if (!isActive()) return;
+                try {
+                  const { data: { session: s } } = await getSessionResilient();
+                  if (!isActive()) return;
+                  if (!s?.user) {
+                    setPendingApproval(false);
+                    setUser(null);
+                    clearQueryCacheOnLogout();
+                  }
+                } catch {
+                  if (isActive()) {
+                    setPendingApproval(false);
+                    setUser(null);
+                    clearQueryCacheOnLogout();
+                  }
+                }
+              })();
+            }, 0);
           }
         } catch (err) {
           console.error("Error in onAuthStateChange handler:", err);
@@ -364,16 +396,24 @@ export function useSupabaseAuth() {
       try {
         const { data: { session }, error, timedOut } = await getSessionForHydrate();
         if (!isActive()) return;
+
+        // Čim znamo ishod getSession, pusti UI — ne čekaj profil niti retry granu (sprečava „Provera sesije” zauvek).
+        clearTimeout(watchdog);
+        setAuthReady(true);
+
         if (error) {
           console.error("Auth getSession on mount:", error);
           if (isActive()) {
             setPendingApproval(false);
             setUser(null);
+            clearQueryCacheOnLogout();
           }
           return;
         }
         if (timedOut) {
-          console.warn("Auth hydrate: getSession timed out; cleared user so UI can proceed");
+          console.warn(
+            "Auth hydrate: getSession timed out — not clearing session (INITIAL_SESSION may still apply); scheduling retry",
+          );
         }
         if (session?.user) {
           try {
@@ -388,18 +428,41 @@ export function useSupabaseAuth() {
               }
             }
           }
-        } else if (isActive()) {
+        } else if (isActive() && !timedOut) {
+          // Samo kad getSession potvrdi da nema sesije — timeout nije "nema korisnika" (izbegni trku sa INITIAL_SESSION).
           setPendingApproval(false);
           setUser(null);
+        } else if (isActive() && timedOut) {
+          void (async () => {
+            await sleep(400);
+            if (!isActive()) return;
+            try {
+              const { data: { session: retrySession }, error: retryErr } = await getSessionResilient();
+              if (!isActive()) return;
+              if (retryErr) {
+                console.error("Auth hydrate retry getSession:", retryErr);
+                return;
+              }
+              if (retrySession?.user) {
+                applySessionFastThenProfile(retrySession, isActive);
+              } else if (!useAuthStore.getState().user) {
+                setPendingApproval(false);
+                setUser(null);
+              }
+            } catch (e) {
+              console.error("Auth hydrate retry error:", e);
+            }
+          })();
         }
       } catch (e) {
         console.error("Auth hydrate error:", e);
+        clearTimeout(watchdog);
         if (isActive()) {
           setPendingApproval(false);
           setUser(null);
+          clearQueryCacheOnLogout();
+          setAuthReady(true);
         }
-      } finally {
-        if (isActive()) setAuthReady(true);
       }
     })();
 
@@ -448,6 +511,7 @@ export function useSupabaseAuth() {
     window.addEventListener("online", onWindowOnline);
 
     return () => {
+      clearTimeout(watchdog);
       subscription.unsubscribe();
       document.removeEventListener("visibilitychange", onVisibilityChange);
       window.removeEventListener("focus", onWindowFocus);
@@ -456,5 +520,15 @@ export function useSupabaseAuth() {
         window.removeEventListener("storage", onStorage);
       }
     };
-  }, [setUser, mergeUser, setAuthReady, setPendingApproval, applySessionFastThenProfile, applySessionToStore, fetchProfile, revalidateAuthState]);
+  }, [
+    clearQueryCacheOnLogout,
+    setUser,
+    mergeUser,
+    setAuthReady,
+    setPendingApproval,
+    applySessionFastThenProfile,
+    applySessionToStore,
+    fetchProfile,
+    revalidateAuthState,
+  ]);
 }

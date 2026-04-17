@@ -2,7 +2,7 @@ import { useEffect } from "react";
 import { QueryClient, QueryClientProvider, hashKey, useQueryClient } from "@tanstack/react-query";
 import { getReactQueryWindowScope } from "@/lib/react-query-window-scope";
 import { applyDocumentLanguageFromCache } from "@/lib/app-settings";
-import { BrowserRouter, Route, Routes, Navigate } from "react-router-dom";
+import { BrowserRouter, HashRouter, Route, Routes, Navigate } from "react-router-dom";
 import { Toaster as Sonner } from "@/components/ui/sonner";
 import { Toaster } from "@/components/ui/toaster";
 import { TooltipProvider } from "@/components/ui/tooltip";
@@ -25,10 +25,18 @@ import UsersPage from "./pages/UsersPage";
 import TeamsPage from "./pages/TeamsPage";
 import SettingsPage from "./pages/SettingsPage";
 import SuppliersPage from "./pages/SuppliersPage";
+import VehiclesPage from "./pages/VehiclesPage";
+import WorkersPage from "./pages/WorkersPage";
+import CompletedJobsMapPage from "./pages/CompletedJobsMapPage";
 import NotFound from "./pages/NotFound";
 import PendingApprovalPage from "./pages/PendingApprovalPage";
 
 import { OfflineBanner } from "@/components/shared/OfflineBanner";
+import { InstallAppPrompt } from "@/components/shared/InstallAppPrompt";
+import { MaintenanceModeGate } from "@/components/MaintenanceModeGate";
+
+const isElectronBuild = import.meta.env.VITE_ELECTRON_BUILD === "true";
+const AppRouter = isElectronBuild ? HashRouter : BrowserRouter;
 
 const reactQueryWindowScope =
   typeof window !== "undefined" ? getReactQueryWindowScope() : "ssr";
@@ -80,6 +88,7 @@ const AppContent = () => {
   }, []);
 
   return (
+    <MaintenanceModeGate>
     <Routes>
       <Route path="/login" element={<LoginPage />} />
       <Route
@@ -100,6 +109,12 @@ const AppContent = () => {
       <Route path="/jobs" element={
         <ProtectedRoute module="jobs">
           <JobsListPage />
+        </ProtectedRoute>
+      } />
+
+      <Route path="/jobs-map" element={
+        <ProtectedRoute module="jobs">
+          <CompletedJobsMapPage />
         </ProtectedRoute>
       } />
       
@@ -144,6 +159,18 @@ const AppContent = () => {
           <SuppliersPage />
         </ProtectedRoute>
       } />
+
+      <Route path="/vehicles" element={
+        <ProtectedRoute module="vehicles">
+          <VehiclesPage />
+        </ProtectedRoute>
+      } />
+
+      <Route path="/workers" element={
+        <ProtectedRoute module="workers">
+          <WorkersPage />
+        </ProtectedRoute>
+      } />
       
       <Route path="/work-orders" element={
         <ProtectedRoute module="work-orders">
@@ -183,6 +210,7 @@ const AppContent = () => {
       
       <Route path="*" element={<NotFound />} />
     </Routes>
+    </MaintenanceModeGate>
   );
 };
 
@@ -194,10 +222,11 @@ const App = () => (
         <RoleProvider>
           <Toaster />
           <Sonner position="top-right" closeButton />
-          <BrowserRouter future={{ v7_startTransition: true, v7_relativeSplatPath: true }}>
+          <AppRouter future={{ v7_startTransition: true, v7_relativeSplatPath: true }}>
             <AppContent />
+            <InstallAppPrompt />
             <OfflineBanner />
-          </BrowserRouter>
+          </AppRouter>
         </RoleProvider>
       </I18nProvider>
     </TooltipProvider>

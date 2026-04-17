@@ -2,6 +2,8 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { supabase } from "@/lib/supabase";
 import type { AppFile, FileCategory } from "@/types";
 import { toast } from "sonner";
+import { upsertSystemActivity } from "@/lib/activity-automation";
+import { labelFileCategory } from "@/lib/activity-labels";
 
 export interface UploadFileInput {
   jobId?: string;
@@ -96,6 +98,15 @@ export function useFiles() {
 
       if (dbError) throw dbError;
 
+      if (jobId) {
+        await upsertSystemActivity({
+          jobId,
+          description: `Dodat fajl (${labelFileCategory(category)}): ${file.name}`,
+          systemKey: `file-uploaded:${dbData.id}`,
+          authorId: uploadedBy,
+        });
+      }
+
       const mapped = mapDbToFile(dbData as FileRow);
       return {
         ...mapped,
@@ -107,6 +118,7 @@ export function useFiles() {
         queryClient.invalidateQueries({ queryKey: ["files", variables.jobId] });
       }
       queryClient.invalidateQueries({ queryKey: ["files"] });
+      queryClient.invalidateQueries({ queryKey: ["activities"] });
       toast.success("Fajl uspešno otpremljen");
     },
     onError: (err: unknown) => {

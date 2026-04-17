@@ -18,13 +18,25 @@ import {
 } from "@/components/ui/dropdown-menu";
 import { Button } from "@/components/ui/button";
 import { useToast } from "@/hooks/use-toast";
+import { useState } from "react";
+import { Input } from "@/components/ui/input";
+import { Label } from "@/components/ui/label";
+import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 
 export default function UsersPage() {
-  const { users, isLoading, updateRole, isUpdating } = useUsers();
+  const { users, isLoading, updateRole, updateFullName, isUpdating, isUpdatingFullName } = useUsers();
   const { currentRole } = useRole();
   const { toast } = useToast();
+  const [nameDialogOpen, setNameDialogOpen] = useState(false);
+  const [editingUserId, setEditingUserId] = useState<string | null>(null);
+  const [editingFullName, setEditingFullName] = useState("");
   const pendingCount = users?.filter((u) => !u.role).length ?? 0;
   const activeCount = users?.filter((u) => u.active).length ?? 0;
+
+  const getDisplayName = (fullName?: string, name?: string, email?: string) => {
+    const candidate = (fullName && fullName.trim()) || (name && name.trim()) || (email?.split("@")[0] ?? "Korisnik");
+    return candidate;
+  };
 
   const handleRoleChange = async (userId: string, newRole: UserRole) => {
     try {
@@ -38,6 +50,35 @@ export default function UsersPage() {
       toast({
         title: "Greška",
         description: "Nije uspelo ažuriranje uloge.",
+        variant: "destructive",
+      });
+    }
+  };
+
+  const openFullNameDialog = (userId: string, currentValue?: string, fallback?: string) => {
+    setEditingUserId(userId);
+    setEditingFullName((currentValue || fallback || "").trim());
+    setNameDialogOpen(true);
+  };
+
+  const submitFullNameChange = async () => {
+    if (!editingUserId) return;
+    const trimmed = editingFullName.trim();
+    if (!trimmed) return;
+    try {
+      await updateFullName({ userId: editingUserId, fullName: trimmed });
+      toast({
+        title: "Sačuvano",
+        description: "Ime i prezime je ažurirano.",
+      });
+      setNameDialogOpen(false);
+      setEditingUserId(null);
+      setEditingFullName("");
+    } catch (err) {
+      console.error("Error updating full_name:", err);
+      toast({
+        title: "Greška",
+        description: "Nije uspelo ažuriranje imena i prezimena.",
         variant: "destructive",
       });
     }
@@ -76,9 +117,9 @@ export default function UsersPage() {
                     <td className="px-4 lg:px-5 py-3">
                       <div className="flex items-center gap-3">
                         <div className="w-8 h-8 rounded-full bg-primary/10 flex items-center justify-center text-xs font-semibold text-primary shrink-0 uppercase">
-                          {u.name.split(" ").map(n => n[0]).join("")}
+                          {getDisplayName(u.fullName, u.name, u.email).split(" ").map(n => n[0]).join("")}
                         </div>
-                        <span className="text-sm font-medium">{u.name}</span>
+                        <span className="text-sm font-medium">{getDisplayName(u.fullName, u.name, u.email)}</span>
                       </div>
                     </td>
                     <td className="px-4 lg:px-5 py-3 text-sm text-muted-foreground">{u.email}</td>
@@ -101,7 +142,14 @@ export default function UsersPage() {
                             </Button>
                           </DropdownMenuTrigger>
                           <DropdownMenuContent align="end">
-                            <DropdownMenuLabel>Promeni ulogu</DropdownMenuLabel>
+                            <DropdownMenuLabel>Akcije korisnika</DropdownMenuLabel>
+                            <DropdownMenuSeparator />
+                            <DropdownMenuItem
+                              onClick={() => openFullNameDialog(u.id, u.fullName, u.name)}
+                              disabled={isUpdatingFullName}
+                            >
+                              Izmeni ime i prezime
+                            </DropdownMenuItem>
                             <DropdownMenuSeparator />
                             {(Object.keys(ROLE_CONFIG) as UserRole[]).map((role) => (
                               <DropdownMenuItem 
@@ -127,10 +175,10 @@ export default function UsersPage() {
             {users?.map(u => (
               <div key={u.id} className="p-4 flex items-center gap-3">
                 <div className="w-9 h-9 rounded-full bg-primary/10 flex items-center justify-center text-xs font-semibold text-primary shrink-0 uppercase">
-                  {u.name.split(" ").map(n => n[0]).join("")}
+                  {getDisplayName(u.fullName, u.name, u.email).split(" ").map(n => n[0]).join("")}
                 </div>
                 <div className="flex-1 min-w-0">
-                  <p className="text-sm font-medium truncate">{u.name}</p>
+                  <p className="text-sm font-medium truncate">{getDisplayName(u.fullName, u.name, u.email)}</p>
                   <p className="text-xs text-muted-foreground truncate">{u.email}</p>
                 </div>
                 <div className="flex flex-col gap-1 items-end">
@@ -148,7 +196,14 @@ export default function UsersPage() {
                           </Button>
                         </DropdownMenuTrigger>
                         <DropdownMenuContent align="end">
-                          <DropdownMenuLabel>Promeni ulogu</DropdownMenuLabel>
+                          <DropdownMenuLabel>Akcije korisnika</DropdownMenuLabel>
+                          <DropdownMenuSeparator />
+                          <DropdownMenuItem
+                            onClick={() => openFullNameDialog(u.id, u.fullName, u.name)}
+                            disabled={isUpdatingFullName}
+                          >
+                            Izmeni ime i prezime
+                          </DropdownMenuItem>
                           <DropdownMenuSeparator />
                           {(Object.keys(ROLE_CONFIG) as UserRole[]).map((role) => (
                             <DropdownMenuItem 
@@ -193,6 +248,40 @@ export default function UsersPage() {
             );
           })}
         </div>
+
+        <Dialog open={nameDialogOpen} onOpenChange={setNameDialogOpen}>
+          <DialogContent className="w-full sm:max-w-md">
+            <DialogHeader>
+              <DialogTitle>Izmeni ime i prezime</DialogTitle>
+            </DialogHeader>
+            <div className="space-y-4">
+              <div className="space-y-2">
+                <Label htmlFor="user-full-name">Ime i prezime</Label>
+                <Input
+                  id="user-full-name"
+                  value={editingFullName}
+                  onChange={(e) => setEditingFullName(e.target.value)}
+                  placeholder="Unesite ime i prezime"
+                />
+              </div>
+              <div className="flex flex-col-reverse gap-2 sm:flex-row sm:justify-end [&>button]:w-full sm:[&>button]:w-auto">
+                <Button
+                  variant="outline"
+                  onClick={() => {
+                    setNameDialogOpen(false);
+                    setEditingUserId(null);
+                    setEditingFullName("");
+                  }}
+                >
+                  Otkaži
+                </Button>
+                <Button onClick={submitFullNameChange} disabled={isUpdatingFullName || editingFullName.trim().length === 0}>
+                  Sačuvaj
+                </Button>
+              </div>
+            </div>
+          </DialogContent>
+        </Dialog>
       </PageTransition>
     </AppLayout>
   );

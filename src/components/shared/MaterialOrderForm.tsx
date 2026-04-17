@@ -269,7 +269,7 @@ export function MaterialOrderForm({ jobId, initialData, onSubmit, onCancel, isLo
           />
         </div>
 
-        <div className="grid grid-cols-2 gap-4">
+        <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
           <FormField
             control={form.control}
             name="paid"
@@ -317,7 +317,7 @@ export function MaterialOrderForm({ jobId, initialData, onSubmit, onCancel, isLo
           )}
         />
 
-        <div className="flex justify-end gap-3 pt-4 border-t border-border">
+        <div className="flex flex-col-reverse gap-2 border-t border-border pt-4 sm:flex-row sm:justify-end sm:gap-3 [&>button]:w-full sm:[&>button]:w-auto">
           <Button type="button" variant="outline" onClick={onCancel} disabled={isLoading}>
             Otkaži
           </Button>

@@ -27,6 +27,8 @@ export function ActivitiesTab({ activities }: { activities: Activity[] }) {
           <div className="absolute left-5 top-0 bottom-0 w-px bg-border" />
           {activities.map((act) => {
             const Icon = typeIcons[act.type];
+            const isAuto = act.description.startsWith("[AUTO] ");
+            const displayDescription = isAuto ? act.description.replace("[AUTO] ", "") : act.description;
             // Only show job link if we're not already on a job details page
             const showJobLink = !currentJobId && act.jobId;
             
@@ -39,6 +41,11 @@ export function ActivitiesTab({ activities }: { activities: Activity[] }) {
                   <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-1 mb-1.5">
                     <div className="flex items-center gap-2 flex-wrap">
                       <span className="text-xs font-medium text-primary bg-primary/10 px-2 py-0.5 rounded">{typeLabels[act.type]}</span>
+                      {isAuto && (
+                        <span className="text-[10px] font-medium text-muted-foreground bg-muted px-1.5 py-0.5 rounded">
+                          AUTO
+                        </span>
+                      )}
                       <span className="text-xs text-muted-foreground">{act.createdBy}</span>
                       {showJobLink && (
                         <button 
@@ -51,7 +58,7 @@ export function ActivitiesTab({ activities }: { activities: Activity[] }) {
                     </div>
                     <span className="text-xs text-muted-foreground">{new Date(act.createdAt).toLocaleString("sr-RS")}</span>
                   </div>
-                  <p className="text-sm text-foreground leading-relaxed">{act.description}</p>
+                  <p className="text-sm text-foreground leading-relaxed">{displayDescription}</p>
                   {act.attachmentName && (
                     <div className="flex items-center gap-1.5 mt-2 text-xs text-primary">
                       <Paperclip className="w-3 h-3" /> {act.attachmentName}

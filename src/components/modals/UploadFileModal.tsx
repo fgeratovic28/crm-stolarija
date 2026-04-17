@@ -102,7 +102,7 @@ export function UploadFileModal({ trigger, jobId: propJobId }: UploadFileModalPr
       <DialogTrigger asChild>
         {trigger || <Button size="sm"><Upload className="w-4 h-4 mr-1" /> Otpremi</Button>}
       </DialogTrigger>
-      <DialogContent className="max-w-lg">
+      <DialogContent className="w-full sm:max-w-lg">
         <DialogHeader>
           <DialogTitle>Otpremanje fajlova</DialogTitle>
         </DialogHeader>
@@ -172,7 +172,7 @@ export function UploadFileModal({ trigger, jobId: propJobId }: UploadFileModalPr
               </FormItem>
             )} />
 
-            <div className="flex justify-end gap-2 pt-2">
+            <div className="flex flex-col-reverse gap-2 pt-2 sm:flex-row sm:justify-end [&>button]:w-full sm:[&>button]:w-auto">
               <Button type="button" variant="outline" onClick={() => setOpen(false)}>Otkaži</Button>
               <Button type="submit" disabled={selectedFiles.length === 0 || uploadFile.isPending}>
                 {uploadFile.isPending ? (

@@ -26,6 +26,8 @@ export default function ActivitiesPage() {
   ];
 
   const filtered = activities.filter(a => {
+    const hideAutoFileUpload = a.description.startsWith("[AUTO] Dodat fajl");
+    if (hideAutoFileUpload) return false;
     const matchType = filters.type === "all" || a.type === filters.type;
     const matchJob = filters.job === "all" || a.jobId === filters.job;
     return matchType && matchJob;

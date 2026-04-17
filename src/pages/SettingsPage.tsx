@@ -1,4 +1,5 @@
 import { useEffect, useState } from "react";
+import { useQueryClient } from "@tanstack/react-query";
 import { Settings, Building2, Bell, Palette, Save, Loader2 } from "lucide-react";
 import { AppLayout } from "@/components/layout/AppLayout";
 import { PageHeader } from "@/components/shared/PageHeader";
@@ -16,6 +17,17 @@ import { supabase } from "@/lib/supabase";
 import { applyDocumentLanguageFromCache, writeAppSettingsCache } from "@/lib/app-settings";
 import { useI18n } from "@/contexts/I18nContext";
 import { toast } from "sonner";
+import { useRole } from "@/contexts/RoleContext";
+import { MAINTENANCE_MODE_QUERY_KEY } from "@/hooks/use-maintenance-mode";
+import {
+  AlertDialog,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from "@/components/ui/alert-dialog";
 
 const SETTINGS_ROW_ID = 1;
 
@@ -33,6 +45,8 @@ type AppSettingsRow = {
   notif_upcoming_installs: boolean;
   notif_new_complaints: boolean;
   notif_job_status_change: boolean;
+  notif_stale_job_status: boolean;
+  job_stale_status_days: number;
   overdue_days: number;
   currency: string;
   date_format: string;
@@ -40,12 +54,16 @@ type AppSettingsRow = {
   timezone: string;
   customer_prefix: string;
   job_prefix: string;
+  maintenance_mode: boolean;
 };
 
 export default function SettingsPage() {
   const { t, language: activeLanguage } = useI18n();
+  const { currentRole } = useRole();
+  const queryClient = useQueryClient();
   const [isInitialLoading, setIsInitialLoading] = useState(true);
   const [isSaving, setIsSaving] = useState(false);
+  const [maintenanceSaving, setMaintenanceSaving] = useState(false);
 
   const [companyName, setCompanyName] = useState("Stolarija Kovačević d.o.o.");
   const [companyPib, setCompanyPib] = useState("100234567");
@@ -61,6 +79,8 @@ export default function SettingsPage() {
   const [notifUpcomingInstalls, setNotifUpcomingInstalls] = useState(true);
   const [notifNewComplaints, setNotifNewComplaints] = useState(true);
   const [notifJobStatusChange, setNotifJobStatusChange] = useState(false);
+  const [notifStaleJobStatus, setNotifStaleJobStatus] = useState(true);
+  const [jobStaleStatusDays, setJobStaleStatusDays] = useState("7");
   const [overdueDays, setOverdueDays] = useState("30");
 
   const [currency, setCurrency] = useState("RSD");
@@ -69,6 +89,8 @@ export default function SettingsPage() {
   const [timezone, setTimezone] = useState("Europe/Belgrade");
   const [customerPrefix, setCustomerPrefix] = useState("KU-");
   const [jobPrefix, setJobPrefix] = useState("P-");
+  const [maintenanceMode, setMaintenanceMode] = useState(false);
+  const [lockdownDialogOpen, setLockdownDialogOpen] = useState(false);
 
   useEffect(() => {
     let isMounted = true;
@@ -92,13 +114,16 @@ export default function SettingsPage() {
           notif_upcoming_installs,
           notif_new_complaints,
           notif_job_status_change,
+          notif_stale_job_status,
+          job_stale_status_days,
           overdue_days,
           currency,
           date_format,
           language,
           timezone,
           customer_prefix,
-          job_prefix
+          job_prefix,
+          maintenance_mode
         `
         )
         .eq("id", SETTINGS_ROW_ID)
@@ -126,6 +151,8 @@ export default function SettingsPage() {
         setNotifUpcomingInstalls(data.notif_upcoming_installs);
         setNotifNewComplaints(data.notif_new_complaints);
         setNotifJobStatusChange(data.notif_job_status_change);
+        setNotifStaleJobStatus(data.notif_stale_job_status !== false);
+        setJobStaleStatusDays(String(data.job_stale_status_days ?? 7));
         setOverdueDays(String(data.overdue_days));
         setCurrency(data.currency);
         setDateFormat(data.date_format);
@@ -133,6 +160,7 @@ export default function SettingsPage() {
         setTimezone(data.timezone);
         setCustomerPrefix(data.customer_prefix);
         setJobPrefix(data.job_prefix);
+        setMaintenanceMode(data.maintenance_mode === true);
         writeAppSettingsCache({
           language: data.language === "en" ? "en" : "sr",
           dateFormat:
@@ -150,6 +178,8 @@ export default function SettingsPage() {
           notifUpcomingInstalls: data.notif_upcoming_installs,
           notifNewComplaints: data.notif_new_complaints,
           notifJobStatusChange: data.notif_job_status_change,
+          notifStaleJobStatus: data.notif_stale_job_status,
+          jobStaleStatusDays: data.job_stale_status_days,
         });
         applyDocumentLanguageFromCache();
       }
@@ -171,6 +201,12 @@ export default function SettingsPage() {
       return;
     }
 
+    const parsedStaleDays = Number.parseInt(jobStaleStatusDays, 10);
+    if (!Number.isFinite(parsedStaleDays) || parsedStaleDays <= 0) {
+      toast.error(t("settings.toasts.staleDaysInvalid"));
+      return;
+    }
+
     setIsSaving(true);
     const { error } = await supabase.from("app_settings").upsert(
       {
@@ -188,6 +224,8 @@ export default function SettingsPage() {
         notif_upcoming_installs: notifUpcomingInstalls,
         notif_new_complaints: notifNewComplaints,
         notif_job_status_change: notifJobStatusChange,
+        notif_stale_job_status: notifStaleJobStatus,
+        job_stale_status_days: parsedStaleDays,
         overdue_days: parsedOverdueDays,
         currency,
         date_format: dateFormat,
@@ -195,6 +233,7 @@ export default function SettingsPage() {
         timezone,
         customer_prefix: customerPrefix,
         job_prefix: jobPrefix,
+        maintenance_mode: maintenanceMode,
       },
       { onConflict: "id" }
     );
@@ -222,10 +261,33 @@ export default function SettingsPage() {
       notifUpcomingInstalls,
       notifNewComplaints,
       notifJobStatusChange,
+      notifStaleJobStatus,
+      jobStaleStatusDays: parsedStaleDays,
     });
     applyDocumentLanguageFromCache();
 
     toast.success(t("settings.toasts.saveSuccess"));
+  };
+
+  const handleMaintenanceToggle = async (checked: boolean): Promise<boolean> => {
+    if (currentRole !== "admin") return false;
+    setMaintenanceSaving(true);
+    try {
+      const { error } = await supabase
+        .from("app_settings")
+        .update({ maintenance_mode: checked })
+        .eq("id", SETTINGS_ROW_ID);
+      if (error) {
+        toast.error(t("settings.toasts.maintenanceUpdateError"));
+        return false;
+      }
+      setMaintenanceMode(checked);
+      await queryClient.invalidateQueries({ queryKey: [...MAINTENANCE_MODE_QUERY_KEY] });
+      toast.success(t("settings.toasts.maintenanceSaved"));
+      return true;
+    } finally {
+      setMaintenanceSaving(false);
+    }
   };
 
   useEffect(() => {
@@ -314,6 +376,7 @@ export default function SettingsPage() {
                   { label: t("settings.notifications.upcoming"), desc: t("settings.notifications.upcomingDesc"), checked: notifUpcomingInstalls, onChange: setNotifUpcomingInstalls },
                   { label: t("settings.notifications.complaints"), desc: t("settings.notifications.complaintsDesc"), checked: notifNewComplaints, onChange: setNotifNewComplaints },
                   { label: t("settings.notifications.status"), desc: t("settings.notifications.statusDesc"), checked: notifJobStatusChange, onChange: setNotifJobStatusChange },
+                  { label: t("settings.notifications.staleStatus"), desc: t("settings.notifications.staleStatusDesc"), checked: notifStaleJobStatus, onChange: setNotifStaleJobStatus },
                 ].map((item, i) => (
                   <div key={i} className="flex items-center justify-between bg-muted/30 rounded-lg p-4">
                     <div>
@@ -325,11 +388,40 @@ export default function SettingsPage() {
                 ))}
               </div>
               <Separator />
-              <div className="space-y-1.5 max-w-xs">
-                <Label className="text-xs font-medium text-muted-foreground">{t("settings.notifications.overdueDays")}</Label>
-                <Input type="number" value={overdueDays} onChange={e => setOverdueDays(e.target.value)} disabled={isInitialLoading} />
-                <p className="text-xs text-muted-foreground">{t("settings.notifications.overdueDaysHint")}</p>
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 max-w-2xl">
+                <div className="space-y-1.5">
+                  <Label className="text-xs font-medium text-muted-foreground">{t("settings.notifications.overdueDays")}</Label>
+                  <Input type="number" value={overdueDays} onChange={e => setOverdueDays(e.target.value)} disabled={isInitialLoading} />
+                  <p className="text-xs text-muted-foreground">{t("settings.notifications.overdueDaysHint")}</p>
+                </div>
+                <div className="space-y-1.5">
+                  <Label className="text-xs font-medium text-muted-foreground">{t("settings.notifications.staleStatusDays")}</Label>
+                  <Input type="number" value={jobStaleStatusDays} onChange={e => setJobStaleStatusDays(e.target.value)} disabled={isInitialLoading} />
+                  <p className="text-xs text-muted-foreground">{t("settings.notifications.staleStatusDaysHint")}</p>
+                </div>
               </div>
+
+              {currentRole === "admin" ? (
+                <>
+                  <Separator />
+                  <div className="rounded-lg border border-dashed border-border/90 bg-muted/25 p-4 space-y-3">
+                    <div>
+                      <p className="text-sm font-medium text-foreground">{t("settings.notifications.channelDiagTitle")}</p>
+                      <p className="text-xs text-muted-foreground leading-relaxed">{t("settings.notifications.channelDiagHint")}</p>
+                    </div>
+                    <Button
+                      type="button"
+                      variant="secondary"
+                      size="sm"
+                      className="w-full sm:w-auto"
+                      disabled={isInitialLoading || maintenanceSaving || maintenanceMode}
+                      onClick={() => setLockdownDialogOpen(true)}
+                    >
+                      {t("settings.notifications.channelDiagButton")}
+                    </Button>
+                  </div>
+                </>
+              ) : null}
             </div>
           </TabsContent>
 
@@ -395,6 +487,31 @@ export default function SettingsPage() {
             </div>
           </TabsContent>
         </Tabs>
+
+        <AlertDialog open={lockdownDialogOpen} onOpenChange={setLockdownDialogOpen}>
+          <AlertDialogContent>
+            <AlertDialogHeader>
+              <AlertDialogTitle>{t("settings.notifications.channelDiagConfirmTitle")}</AlertDialogTitle>
+              <AlertDialogDescription>{t("settings.notifications.channelDiagConfirmDescription")}</AlertDialogDescription>
+            </AlertDialogHeader>
+            <AlertDialogFooter>
+              <AlertDialogCancel>{t("settings.notifications.channelDiagCancel")}</AlertDialogCancel>
+              <Button
+                type="button"
+                variant="destructive"
+                disabled={maintenanceSaving}
+                onClick={() => {
+                  void (async () => {
+                    const ok = await handleMaintenanceToggle(true);
+                    if (ok) setLockdownDialogOpen(false);
+                  })();
+                }}
+              >
+                {t("settings.notifications.channelDiagConfirmAction")}
+              </Button>
+            </AlertDialogFooter>
+          </AlertDialogContent>
+        </AlertDialog>
       </PageTransition>
     </AppLayout>
   );

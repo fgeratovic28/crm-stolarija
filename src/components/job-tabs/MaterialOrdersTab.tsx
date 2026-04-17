@@ -17,6 +17,7 @@ import { useAuthStore } from "@/stores/auth-store";
 import { toast } from "sonner";
 import type { MaterialOrder } from "@/types";
 import type { MaterialOrderFormValues } from "@/components/shared/MaterialOrderForm";
+import { labelMaterialType } from "@/lib/activity-labels";
 
 const deliveryVariant: Record<string, "success" | "warning" | "info" | "muted"> = {
   delivered: "success", shipped: "info", pending: "warning", partial: "muted",
@@ -140,7 +141,7 @@ export function MaterialOrdersTab({ orders: initialOrders, jobId }: { orders?: M
                       <Package className="w-4 h-4 text-primary" />
                     </div>
                     <div>
-                      <p className="font-medium text-foreground capitalize text-sm">{o.materialType.replace("_", " ")}</p>
+                      <p className="font-medium text-foreground text-sm">{labelMaterialType(o.materialType)}</p>
                       <div className="flex items-center gap-2 text-xs text-muted-foreground">
                         <span>{o.supplier}</span>
                         {relatedJob && (
@@ -226,7 +227,7 @@ export function MaterialOrdersTab({ orders: initialOrders, jobId }: { orders?: M
       )}
 
       <Dialog open={isModalOpen} onOpenChange={setIsModalOpen}>
-        <DialogContent className="max-w-2xl">
+        <DialogContent className="w-full sm:max-w-2xl">
           <DialogHeader>
             <DialogTitle>{editingOrder ? "Izmena narudžbine" : "Nova narudžbina"}</DialogTitle>
           </DialogHeader>

@@ -1,8 +1,62 @@
 import { useQuery } from "@tanstack/react-query";
 import { supabase } from "@/lib/supabase";
 import { useAuthStore } from "@/stores/auth-store";
-import { WorkOrder, Job } from "@/types";
+import type { WorkOrder } from "@/types";
 import { isFieldExecutionRole } from "@/lib/field-team-access";
+
+export type FieldTeamJobEmbed = {
+  id: string;
+  jobNumber: string;
+  installationAddress?: string;
+  summary?: string;
+  installationLat?: number | null;
+  installationLng?: number | null;
+  customer?: { fullName: string; phones?: string[] };
+};
+
+export type FieldTeamWorkOrder = WorkOrder & { job?: FieldTeamJobEmbed };
+
+function parseNullableNumber(value: unknown): number | null {
+  if (value === null || value === undefined || value === "") return null;
+  const parsed = Number(value);
+  return Number.isFinite(parsed) ? parsed : null;
+}
+
+function mapWorkOrderRow(d: Record<string, unknown>): FieldTeamWorkOrder {
+  const jobRaw = d.job as Record<string, unknown> | null | undefined;
+  const custRaw = jobRaw?.customer as Record<string, unknown> | Record<string, unknown>[] | undefined;
+  const cust = Array.isArray(custRaw) ? custRaw[0] : custRaw;
+
+  return {
+    id: d.id as string,
+    jobId: d.job_id as string,
+    type: d.type as FieldTeamWorkOrder["type"],
+    description: (d.description as string) || "",
+    assignedTeamId: d.team_id as string | undefined,
+    date: d.date as string,
+    status: d.status as FieldTeamWorkOrder["status"],
+    attachmentName: d.file_id ? "attachment" : undefined,
+    installationRef: d.installation_ref as string | undefined,
+    productionRef: d.production_ref as string | undefined,
+    job: jobRaw
+      ? {
+          id: jobRaw.id as string,
+          jobNumber: jobRaw.job_number as string,
+          installationAddress:
+            typeof jobRaw.installation_address === "string" ? jobRaw.installation_address : undefined,
+          summary: typeof jobRaw.summary === "string" ? jobRaw.summary : undefined,
+          installationLat: parseNullableNumber(jobRaw.installation_lat),
+          installationLng: parseNullableNumber(jobRaw.installation_lng),
+          customer: cust
+            ? {
+                fullName: (cust.name as string) || "",
+                phones: (cust.phones as string[]) || [],
+              }
+            : undefined,
+        }
+      : undefined,
+  };
+}
 
 export function useFieldTeamData() {
   const { user } = useAuthStore();
@@ -10,11 +64,25 @@ export function useFieldTeamData() {
   const { data: workOrders, isLoading: isLoadingOrders, error: ordersError } = useQuery({
     queryKey: ["field-team-work-orders", user?.teamId, user?.role],
     queryFn: async () => {
-      if (!user?.teamId || !isFieldExecutionRole(user.role)) return [];
+      if (!user?.teamId || !isFieldExecutionRole(user.role)) return [] as FieldTeamWorkOrder[];
 
-      let q = supabase
-        .from("work_orders")
-        .select(`
+      const selectWithCoords = `
+          *,
+          job:jobs!inner (
+            id,
+            job_number,
+            installation_address,
+            installation_lat,
+            installation_lng,
+            summary,
+            customer:customers (
+              name,
+              phones
+            )
+          )
+        `;
+
+      const selectLegacy = `
           *,
           job:jobs!inner (
             id,
@@ -26,36 +94,28 @@ export function useFieldTeamData() {
               phones
             )
           )
-        `)
+        `;
+
+      const first = await supabase
+        .from("work_orders")
+        .select(selectWithCoords)
         .eq("team_id", user.teamId)
         .order("date", { ascending: true });
 
-      const { data, error } = await q;
+      let data = first.data;
+      if (first.error) {
+        const retry = await supabase
+          .from("work_orders")
+          .select(selectLegacy)
+          .eq("team_id", user.teamId)
+          .order("date", { ascending: true });
+        if (retry.error) throw retry.error;
+        data = retry.data;
+      }
 
-      if (error) throw error;
-      
-      return data.map(d => ({
-        id: d.id,
-        jobId: d.job_id,
-        type: d.type,
-        description: d.description,
-        assignedTeamId: d.team_id,
-        date: d.date,
-        status: d.status,
-        attachmentName: d.file_id ? "attachment" : undefined,
-        installationRef: d.installation_ref,
-        productionRef: d.production_ref,
-        job: d.job ? {
-          id: d.job.id,
-          jobNumber: d.job.job_number,
-          installationAddress: d.job.installation_address,
-          summary: d.job.summary,
-          customer: d.job.customer ? {
-            fullName: d.job.customer[0]?.name || d.job.customer.name,
-            phones: d.job.customer[0]?.phones || d.job.customer.phones
-          } : undefined
-        } : undefined
-      })) as WorkOrder[];
+      if (!data) return [];
+
+      return (data as Record<string, unknown>[]).map(mapWorkOrderRow);
     },
     enabled: !!user?.teamId && isFieldExecutionRole(user?.role),
   });

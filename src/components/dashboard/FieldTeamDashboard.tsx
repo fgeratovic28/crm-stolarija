@@ -11,6 +11,7 @@ import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { useFieldTeamData } from "@/hooks/use-field-team-data";
+import { FieldTeamWorkOrdersMap } from "@/components/dashboard/FieldTeamWorkOrdersMap";
 import { NewFieldReportModal } from "@/components/modals/NewFieldReportModal";
 import { WorkOrderModal } from "@/components/modals/WorkOrderModal";
 import { useToast } from "@/hooks/use-toast";
@@ -19,6 +20,7 @@ import type { WorkOrder, WorkOrderType } from "@/types";
 import { useRole } from "@/contexts/RoleContext";
 import { fieldReportFlowForWorkOrderType } from "@/lib/field-team-access";
 import { useAuthStore } from "@/stores/auth-store";
+import { labelWorkOrderType } from "@/lib/activity-labels";
 
 export function FieldTeamDashboard() {
   const queryClient = useQueryClient();
@@ -75,6 +77,7 @@ export function FieldTeamDashboard() {
       await queryClient.invalidateQueries({
         queryKey: ["field-team-work-orders", user?.teamId, user?.role],
       });
+      await queryClient.invalidateQueries({ queryKey: ["field-team-map-markers"] });
 
       toast({
         title: "Status ažuriran",
@@ -124,17 +127,7 @@ export function FieldTeamDashboard() {
                       {wo.status === 'completed' ? 'Završeno' : wo.status === 'in_progress' ? 'U toku' : 'Na čekanju'}
                     </Badge>
                     <CardTitle className="text-lg">
-                      {wo.type === "installation"
-                        ? "Montaža"
-                        : wo.type === "measurement"
-                          ? "Merenje"
-                          : wo.type === "site_visit"
-                            ? "Terenska poseta"
-                            : wo.type === "control_visit"
-                              ? "Kontrolna poseta"
-                              : wo.type === "measurement_verification"
-                                ? "Provera mera"
-                                : wo.type}
+                      {labelWorkOrderType(wo.type)}
                     </CardTitle>
                     <CardDescription>{wo.job?.jobNumber}</CardDescription>
                   </div>
@@ -239,6 +232,8 @@ export function FieldTeamDashboard() {
           <p className="text-muted-foreground">Trenutno nemate aktivnih radnih naloga.</p>
         </div>
       )}
+
+      <FieldTeamWorkOrdersMap workOrders={workOrders ?? []} onOpenWorkOrder={handleOpenDetails} />
 
       {selectedWorkOrder && (
         <NewFieldReportModal 

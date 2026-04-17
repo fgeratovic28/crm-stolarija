@@ -20,22 +20,12 @@ const SINGLETON_KEY = "__crm_stolarija_supabase_client__" as const;
 const AUTH_RECOVERY_PROMISE_KEY = "__crm_stolarija_auth_recovery_promise__" as const;
 
 /**
- * PWA „instalirana” aplikacija (ne običan browser tab).
- * Koristi se da u standalone modu ostane persistSession (localStorage), a u tabu in-memory sesija koja nestaje sa tabom.
+ * Auth sesiju držimo perzistentno u svim kontekstima (tab + installed PWA),
+ * jer "display-mode" detekcija može kasniti ili biti nepouzdana na nekim uređajima.
+ * To je dovodilo do toga da installirana aplikacija nema stabilan login tok ako se
+ * prvi put otvara bez prethodne prijave iz regularnog browser taba.
  */
-export function isPwaStandaloneDisplayMode(): boolean {
-  if (typeof window === "undefined") return false;
-  try {
-    if (window.matchMedia("(display-mode: standalone)").matches) return true;
-  } catch {
-    /* ignore */
-  }
-  const nav = window.navigator as Navigator & { standalone?: boolean };
-  return nav.standalone === true;
-}
-
-/** Isti uslov kao `persistSession` na Supabase klijentu — za uslovni storage sync u hook-u. */
-export const persistAuthSession = isPwaStandaloneDisplayMode();
+export const persistAuthSession = true;
 
 /** Minimalna provera kao GoTrue `_isValidSession` + ne-prazni tokeni (trim). */
 function isUsablePersistedSession(parsed: unknown): boolean {
@@ -120,7 +110,7 @@ function createSafeLocalStorage(sessionKey: string) {
 /**
  * Kratiji `lockAcquireTimeout` brže „krade” zaključavanje ako drugi tab/PWA ostavi Web Lock da visi.
  * `flowType: pkce` smanjuje konflikte oko fragment tokena između browsera i PWA istog origina.
- * U običnom tabu: `persistSession: false` (sesija u memoriji); u PWA standalone: `true` + `createSafeLocalStorage`.
+ * `persistSession` je uvek uključen da bi login radio pouzdano u installiranom PWA scenariju.
  */
 function buildAuthOptions(): GoTrueClientOptions {
   return {
@@ -129,14 +119,8 @@ function buildAuthOptions(): GoTrueClientOptions {
     autoRefreshToken: true,
     detectSessionInUrl: true,
     lockAcquireTimeout: 8000,
-    ...(persistAuthSession
-      ? {
-          storage: createSafeLocalStorage(authStorageKey),
-          persistSession: true,
-        }
-      : {
-          persistSession: false,
-        }),
+    storage: createSafeLocalStorage(authStorageKey),
+    persistSession: true,
   };
 }
 
@@ -166,7 +150,9 @@ async function recoverAuthSessionOnce(): Promise<void> {
     if (!client) return;
 
     try {
-      const { data: { session } } = await client.auth.getSession();
+      const {
+        data: { session },
+      } = await client.auth.getSession();
       if (!session?.refresh_token) return;
       const { error } = await client.auth.refreshSession();
       if (error) {
@@ -182,22 +168,32 @@ async function recoverAuthSessionOnce(): Promise<void> {
   await g[AUTH_RECOVERY_PROMISE_KEY];
 }
 
-const fetchWith401Recovery: typeof fetch = async (input, init) => {
-  const response = await fetch(input, init);
-  if (response.status !== 401) return response;
+/** Posle 401 na REST-u: refresh pa ponovi zahtev (Request.clone / dupliran string body). */
+async function fetchWith401Recovery(
+  input: RequestInfo | URL,
+  requestInit?: RequestInit,
+): Promise<Response> {
+  const first = await fetch(input, requestInit);
+  if (first.status !== 401) return first;
 
-  const url = toUrlString(input);
-  if (isAuthEndpoint(url)) return response;
+  if (isAuthEndpoint(toUrlString(input))) return first;
 
   await recoverAuthSessionOnce();
-  return fetch(input, init);
-};
+
+  if (input instanceof Request) {
+    return fetch(input.clone(), requestInit);
+  }
+  if (requestInit && typeof requestInit.body === "string") {
+    return fetch(input, { ...requestInit, body: requestInit.body });
+  }
+  return fetch(input, requestInit);
+}
 
 export const supabase: SupabaseClient =
   g[SINGLETON_KEY] ??
   (g[SINGLETON_KEY] = createClient(supabaseUrl, supabaseAnonKey, {
     global: {
-      fetch: fetchWith401Recovery,
+      fetch: fetchWith401Recovery as typeof fetch,
     },
     auth: buildAuthOptions(),
   }));

@@ -108,15 +108,15 @@ export function TeamModal({ isOpen, onClose, onSave, team }: TeamModalProps) {
 
   return (
     <Dialog open={isOpen} onOpenChange={onClose}>
-      <DialogContent className="w-[calc(100vw-1.5rem)] max-w-[680px] p-0">
+      <DialogContent className="w-full max-w-[min(calc(100vw-1rem),680px)] p-0 sm:max-w-[680px]">
         <DialogHeader>
-          <DialogTitle className="px-6 pt-6">{team ? "Izmeni tim" : "Dodaj novi tim"}</DialogTitle>
-          <DialogDescription className="px-6">
+          <DialogTitle className="px-4 pt-6 sm:px-6">{team ? "Izmeni tim" : "Dodaj novi tim"}</DialogTitle>
+          <DialogDescription className="px-4 sm:px-6">
             Unesite detalje o timu ispod. Kliknite na sačuvaj kada završite.
           </DialogDescription>
         </DialogHeader>
-        <form onSubmit={handleSubmit} className="max-h-[80vh] overflow-hidden">
-          <div className="space-y-4 px-6 py-4 overflow-y-auto">
+        <form onSubmit={handleSubmit} className="flex max-h-[min(75dvh,calc(100dvh-10rem))] flex-col overflow-hidden">
+          <div className="min-h-0 flex-1 space-y-4 overflow-y-auto px-4 py-4 sm:px-6">
             <div className="grid gap-4 sm:grid-cols-2">
               <div className="grid gap-2">
                 <Label htmlFor="name">Naziv tima</Label>
@@ -203,7 +203,7 @@ export function TeamModal({ isOpen, onClose, onSave, team }: TeamModalProps) {
               />
             </div>
           </div>
-          <DialogFooter className="border-t px-6 py-4">
+          <DialogFooter className="border-t px-4 py-4 sm:px-6">
             <Button type="button" variant="outline" onClick={onClose}>
               Otkaži
             </Button>

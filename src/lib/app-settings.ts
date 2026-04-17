@@ -13,6 +13,8 @@ export type AppSettingsCache = {
   notifUpcomingInstalls: boolean;
   notifNewComplaints: boolean;
   notifJobStatusChange: boolean;
+  notifStaleJobStatus: boolean;
+  jobStaleStatusDays: number;
 };
 
 const DEFAULT_SETTINGS_CACHE: AppSettingsCache = {
@@ -28,6 +30,8 @@ const DEFAULT_SETTINGS_CACHE: AppSettingsCache = {
   notifUpcomingInstalls: true,
   notifNewComplaints: true,
   notifJobStatusChange: false,
+  notifStaleJobStatus: true,
+  jobStaleStatusDays: 7,
 };
 
 export function readAppSettingsCache(): AppSettingsCache {
@@ -65,6 +69,13 @@ export function readAppSettingsCache(): AppSettingsCache {
       notifUpcomingInstalls: parsed.notifUpcomingInstalls !== false,
       notifNewComplaints: parsed.notifNewComplaints !== false,
       notifJobStatusChange: parsed.notifJobStatusChange === true,
+      notifStaleJobStatus: parsed.notifStaleJobStatus !== false,
+      jobStaleStatusDays:
+        typeof parsed.jobStaleStatusDays === "number" &&
+        Number.isFinite(parsed.jobStaleStatusDays) &&
+        parsed.jobStaleStatusDays > 0
+          ? Math.trunc(parsed.jobStaleStatusDays)
+          : 7,
     };
   } catch {
     return DEFAULT_SETTINGS_CACHE;

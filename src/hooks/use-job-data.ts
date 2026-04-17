@@ -10,6 +10,7 @@ import {
   isTerenRole,
   TEREN_WORK_ORDER_TYPES,
 } from "@/lib/field-team-access";
+import { upsertSystemActivity } from "@/lib/activity-automation";
 
 type ErrorWithMessage = { message?: string };
 const getErrorMessage = (err: unknown) =>
@@ -223,11 +224,19 @@ export function useJobRelatedData(jobId: string | undefined) {
         .single();
 
       if (error) throw error;
+      await upsertSystemActivity({
+        jobId: newPayment.jobId,
+        description: `Evidentirana uplata: ${Number(newPayment.amount) || 0}`,
+        systemKey: `payment-recorded:${data.id}`,
+        type: "in_person",
+        authorId: user?.id ?? null,
+      });
       return data;
     },
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ["payments", jobId] });
       queryClient.invalidateQueries({ queryKey: ["job", jobId] }); // To update balance
+      queryClient.invalidateQueries({ queryKey: ["activities"] });
       toast.success("Uplata je uspešno evidentirana");
     },
     onError: (err: unknown) => {

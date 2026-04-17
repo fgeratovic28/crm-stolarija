@@ -193,7 +193,7 @@ export function SupplierForm({ initialData, onSubmit, onCancel, isLoading }: Sup
           )}
         />
 
-        <div className="flex justify-end gap-3 pt-4 border-t border-border">
+        <div className="flex flex-col-reverse gap-2 border-t border-border pt-4 sm:flex-row sm:justify-end sm:gap-3 [&>button]:w-full sm:[&>button]:w-auto">
           <Button type="button" variant="outline" onClick={onCancel} disabled={isLoading}>
             Otkaži
           </Button>

@@ -4,11 +4,23 @@ import { WorkOrder } from "@/types";
 import { useToast } from "@/hooks/use-toast";
 import { useAuthStore } from "@/stores/auth-store";
 import { isFieldExecutionRole } from "@/lib/field-team-access";
+import { upsertSystemActivity } from "@/lib/activity-automation";
+import { labelWorkOrderStatus, labelWorkOrderType } from "@/lib/activity-labels";
+import { recomputeJobStatus } from "@/lib/job-status-automation";
 
 export function useWorkOrders(jobId?: string) {
   const { toast } = useToast();
   const queryClient = useQueryClient();
   const { user } = useAuthStore();
+
+  const runStatusAutomation = async (targetJobId?: string) => {
+    if (!targetJobId) return;
+    try {
+      await recomputeJobStatus(targetJobId, user?.id ?? null);
+    } catch (err) {
+      console.warn("Auto status recompute failed after work order change:", err);
+    }
+  };
 
   const { data: workOrders, isLoading, isError, error } = useQuery({
     queryKey: ["work-orders", jobId, user?.id, user?.role],
@@ -81,10 +93,22 @@ export function useWorkOrders(jobId?: string) {
         .single();
 
       if (error) throw error;
+      await upsertSystemActivity({
+        jobId: newOrder.jobId,
+        description: `Kreiran radni nalog: ${labelWorkOrderType(newOrder.type)}`,
+        systemKey: `work-order-created:${data.id}`,
+        authorId: user?.id ?? null,
+      });
+      await runStatusAutomation(newOrder.jobId);
       return data;
     },
-    onSuccess: () => {
+    onSuccess: (_, variables) => {
       queryClient.invalidateQueries({ queryKey: ["work-orders"] });
+      if (variables.jobId) {
+        queryClient.invalidateQueries({ queryKey: ["job", variables.jobId] });
+      }
+      queryClient.invalidateQueries({ queryKey: ["jobs"] });
+      queryClient.invalidateQueries({ queryKey: ["activities"] });
       toast({ title: "Radni nalog kreiran", description: "Novi radni nalog je uspešno dodat." });
     },
     onError: (error) => {
@@ -97,6 +121,9 @@ export function useWorkOrders(jobId?: string) {
       if (!order.assignedTeamId) {
         throw new Error("Tim je obavezan za radni nalog.");
       }
+      const prev = await supabase.from("work_orders").select("status").eq("id", order.id).single();
+      if (prev.error) throw prev.error;
+      const previousStatus = prev.data?.status as string | undefined;
       const { error } = await supabase
         .from("work_orders")
         .update({
@@ -109,9 +136,23 @@ export function useWorkOrders(jobId?: string) {
         .eq("id", order.id);
 
       if (error) throw error;
+      if (previousStatus && previousStatus !== order.status) {
+        await upsertSystemActivity({
+          jobId: order.jobId,
+          description: `Radni nalog status: ${labelWorkOrderStatus(previousStatus as WorkOrder["status"])} -> ${labelWorkOrderStatus(order.status)}`,
+          systemKey: `work-order-status:${order.id}:${previousStatus}:${order.status}`,
+          authorId: user?.id ?? null,
+        });
+      }
+      await runStatusAutomation(order.jobId);
     },
-    onSuccess: () => {
+    onSuccess: (_, variables) => {
       queryClient.invalidateQueries({ queryKey: ["work-orders"] });
+      if (variables.jobId) {
+        queryClient.invalidateQueries({ queryKey: ["job", variables.jobId] });
+      }
+      queryClient.invalidateQueries({ queryKey: ["jobs"] });
+      queryClient.invalidateQueries({ queryKey: ["activities"] });
       toast({ title: "Radni nalog ažuriran", description: "Promene su uspešno sačuvane." });
     },
     onError: (error) => {

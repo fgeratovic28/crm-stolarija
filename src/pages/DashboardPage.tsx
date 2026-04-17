@@ -21,6 +21,7 @@ import { FieldTeamDashboard } from "@/components/dashboard/FieldTeamDashboard";
 import { isFieldExecutionRole } from "@/lib/field-team-access";
 import { formatCurrencyBySettings, formatDateByAppLanguage, readAppSettingsCache } from "@/lib/app-settings";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
+import { labelMaterialType } from "@/lib/activity-labels";
 
 const STATUS_COLORS: Record<string, string> = {
   new: "hsl(210, 80%, 55%)",
@@ -370,7 +371,7 @@ export default function DashboardPage() {
                       <div key={m.id} className="flex items-center justify-between text-sm cursor-pointer hover:bg-muted/30 -mx-2 px-2 py-1 rounded-lg"
                         onClick={() => m.jobId && navigate(`/jobs/${m.jobId}`)}>
                         <div>
-                          <p className="font-medium text-foreground capitalize">{m.materialType.replace("_", " ")}</p>
+                          <p className="font-medium text-foreground">{labelMaterialType(m.materialType)}</p>
                           <p className="text-xs text-muted-foreground">{m.supplier} {m.jobNumber ? `· ${m.jobNumber}` : ""}</p>
                         </div>
                         <span className="text-xs text-warning font-medium">Očekivano: {m.expectedDelivery}</span>
