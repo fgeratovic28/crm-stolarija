@@ -1,11 +1,15 @@
 import { Navigate, useLocation } from "react-router-dom";
+import { AppSessionLoadingScreen } from "@/components/AppSessionLoadingScreen";
+import { AuthHydratingFallback } from "@/components/AuthHydratingFallback";
+import { hasRichSplashCompleted } from "@/lib/rich-splash-session";
 import { useAuthStore } from "@/stores/auth-store";
 import { useRole } from "@/contexts/RoleContext";
 import { type ModuleName } from "@/config/permissions";
 
 interface ProtectedRouteProps {
   children: React.ReactNode;
-  module?: ModuleName;
+  /** Jedan modul ili više (dovoljan je jedan — OR). */
+  module?: ModuleName | ModuleName[];
 }
 
 export function ProtectedRoute({ children, module }: ProtectedRouteProps) {
@@ -14,22 +18,29 @@ export function ProtectedRoute({ children, module }: ProtectedRouteProps) {
   const location = useLocation();
 
   if (!authReady) {
-    return (
-      <div className="flex min-h-screen w-full items-center justify-center bg-background" aria-busy="true">
-        <div className="text-sm text-muted-foreground">Provera sesije...</div>
-      </div>
-    );
+    if (hasRichSplashCompleted()) {
+      return <AuthHydratingFallback />;
+    }
+    return <AppSessionLoadingScreen sessionReady={false} />;
   }
 
   if (!isAuthenticated) {
     return <Navigate to="/login" state={{ from: location }} replace />;
   }
 
-  if (isPendingApproval) {
+  if (isPendingApproval && location.pathname !== "/pending-approval") {
     return <Navigate to="/pending-approval" replace />;
   }
 
-  if (module && !hasAccess(module)) {
+  if (!isPendingApproval && location.pathname === "/pending-approval") {
+    return <Navigate to="/" replace />;
+  }
+
+  const moduleAllowed =
+    !module ||
+    (Array.isArray(module) ? module.some((m) => hasAccess(m)) : hasAccess(module));
+
+  if (!moduleAllowed) {
     if (location.pathname === "/") {
       return <Navigate to="/login" replace />;
     }

@@ -1,4 +1,4 @@
-import { Shield, Check, MoreVertical } from "lucide-react";
+import { Shield, Check, MoreVertical, Trash2 } from "lucide-react";
 import { AppLayout } from "@/components/layout/AppLayout";
 import { PageHeader } from "@/components/shared/PageHeader";
 import { Breadcrumbs } from "@/components/shared/Breadcrumbs";
@@ -7,7 +7,8 @@ import { TableSkeleton } from "@/components/shared/Skeletons";
 import { GenericBadge } from "@/components/shared/StatusBadge";
 import { useRole } from "@/contexts/RoleContext";
 import { ROLE_CONFIG, type UserRole } from "@/types";
-import { useUsers } from "@/hooks/use-users";
+import { useUsers, type UserListItem } from "@/hooks/use-users";
+import { useAuthStore } from "@/stores/auth-store";
 import { 
   DropdownMenu, 
   DropdownMenuContent, 
@@ -22,14 +23,39 @@ import { useState } from "react";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
+import { Switch } from "@/components/ui/switch";
+import {
+  AlertDialog,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from "@/components/ui/alert-dialog";
 
 export default function UsersPage() {
-  const { users, isLoading, updateRole, updateFullName, isUpdating, isUpdatingFullName } = useUsers();
+  const {
+    users,
+    isLoading,
+    updateRole,
+    updateFullName,
+    updateUserActive,
+    removeUser,
+    isUpdating,
+    isUpdatingFullName,
+    isUpdatingActive,
+    isRemovingUser,
+  } = useUsers();
   const { currentRole } = useRole();
   const { toast } = useToast();
+  const currentUserId = useAuthStore((s) => s.user?.id);
   const [nameDialogOpen, setNameDialogOpen] = useState(false);
   const [editingUserId, setEditingUserId] = useState<string | null>(null);
   const [editingFullName, setEditingFullName] = useState("");
+  const [deleteTarget, setDeleteTarget] = useState<UserListItem | null>(null);
+
+  const mutatingBusy = isUpdating || isUpdatingFullName || isUpdatingActive || isRemovingUser;
   const pendingCount = users?.filter((u) => !u.role).length ?? 0;
   const activeCount = users?.filter((u) => u.active).length ?? 0;
 
@@ -84,6 +110,53 @@ export default function UsersPage() {
     }
   };
 
+  const handleActiveChange = async (userId: string, active: boolean) => {
+    if (userId === currentUserId && !active) {
+      toast({
+        title: "Nije dozvoljeno",
+        description: "Ne možete sami isključiti aktivnost svog naloga.",
+        variant: "destructive",
+      });
+      return;
+    }
+    try {
+      await updateUserActive({ userId, active });
+      toast({
+        title: active ? "Nalog aktiviran" : "Nalog deaktiviran",
+        description: active ? "Korisnik može ponovo da pristupi aplikaciji." : "Korisnik više ne može da pristupi aplikaciji.",
+      });
+    } catch (err) {
+      console.error("Error updating active:", err);
+      toast({
+        title: "Greška",
+        description: "Nije uspelo ažuriranje statusa naloga.",
+        variant: "destructive",
+      });
+    }
+  };
+
+  const confirmDeleteUser = async () => {
+    if (!deleteTarget || deleteTarget.id === currentUserId) return;
+    try {
+      await removeUser(deleteTarget.id);
+      toast({
+        title: "Korisnik obrisan",
+        description: "Nalog je uklonjen iz sistema.",
+      });
+      setDeleteTarget(null);
+    } catch (err) {
+      console.error("Error removing user:", err);
+      toast({
+        title: "Greška",
+        description:
+          err && typeof err === "object" && "message" in err && typeof (err as Error).message === "string"
+            ? (err as Error).message
+            : "Brisanje nije uspelo. Proverite da li je migracija (admin_delete_user) primenjena na bazi.",
+        variant: "destructive",
+      });
+    }
+  };
+
   if (isLoading) return <AppLayout><TableSkeleton rows={5} cols={4} /></AppLayout>;
 
   return (
@@ -131,13 +204,24 @@ export default function UsersPage() {
                       )}
                     </td>
                     <td className="px-4 lg:px-5 py-3">
-                      <GenericBadge label={u.active ? "Aktivan" : "Neaktivan"} variant={u.active ? "success" : "muted"} />
+                      <div className="flex flex-wrap items-center gap-2">
+                        <GenericBadge label={u.active ? "Aktivan" : "Neaktivan"} variant={u.active ? "success" : "muted"} />
+                        {currentRole === "admin" && (
+                          <div className="flex items-center gap-2" title="Aktivan nalog može da se prijavi u CRM (uz dodeljenu ulogu).">
+                            <Switch
+                              checked={u.active}
+                              disabled={mutatingBusy || (u.id === currentUserId && u.active)}
+                              onCheckedChange={(checked) => void handleActiveChange(u.id, checked)}
+                            />
+                          </div>
+                        )}
+                      </div>
                     </td>
                     <td className="px-4 lg:px-5 py-3">
-                      {currentRole === 'admin' && (
+                      {currentRole === "admin" && (
                         <DropdownMenu>
                           <DropdownMenuTrigger asChild>
-                            <Button variant="ghost" size="icon" disabled={isUpdating}>
+                            <Button variant="ghost" size="icon" disabled={mutatingBusy}>
                               <MoreVertical className="w-4 h-4" />
                             </Button>
                           </DropdownMenuTrigger>
@@ -152,8 +236,8 @@ export default function UsersPage() {
                             </DropdownMenuItem>
                             <DropdownMenuSeparator />
                             {(Object.keys(ROLE_CONFIG) as UserRole[]).map((role) => (
-                              <DropdownMenuItem 
-                                key={role} 
+                              <DropdownMenuItem
+                                key={role}
                                 onClick={() => handleRoleChange(u.id, role)}
                                 className="flex items-center justify-between"
                               >
@@ -161,6 +245,15 @@ export default function UsersPage() {
                                 {u.role === role && <Check className="w-4 h-4 text-success" />}
                               </DropdownMenuItem>
                             ))}
+                            <DropdownMenuSeparator />
+                            <DropdownMenuItem
+                              className="text-destructive focus:text-destructive"
+                              disabled={mutatingBusy || u.id === currentUserId}
+                              onClick={() => setDeleteTarget(u)}
+                            >
+                              <Trash2 className="w-4 h-4 mr-2 inline-block align-middle" />
+                              Obriši nalog
+                            </DropdownMenuItem>
                           </DropdownMenuContent>
                         </DropdownMenu>
                       )}
@@ -188,10 +281,10 @@ export default function UsersPage() {
                     ) : (
                       <GenericBadge label="Čeka odobrenje" variant="warning" />
                     )}
-                    {currentRole === 'admin' && (
+                    {currentRole === "admin" && (
                       <DropdownMenu>
                         <DropdownMenuTrigger asChild>
-                          <Button variant="ghost" size="icon" className="h-6 w-6" disabled={isUpdating}>
+                          <Button variant="ghost" size="icon" className="h-6 w-6" disabled={mutatingBusy}>
                             <MoreVertical className="w-3.5 h-3.5" />
                           </Button>
                         </DropdownMenuTrigger>
@@ -206,8 +299,8 @@ export default function UsersPage() {
                           </DropdownMenuItem>
                           <DropdownMenuSeparator />
                           {(Object.keys(ROLE_CONFIG) as UserRole[]).map((role) => (
-                            <DropdownMenuItem 
-                              key={role} 
+                            <DropdownMenuItem
+                              key={role}
                               onClick={() => handleRoleChange(u.id, role)}
                               className="flex items-center justify-between"
                             >
@@ -215,11 +308,29 @@ export default function UsersPage() {
                               {u.role === role && <Check className="w-4 h-4 text-success" />}
                             </DropdownMenuItem>
                           ))}
+                          <DropdownMenuSeparator />
+                          <DropdownMenuItem
+                            className="text-destructive focus:text-destructive"
+                            disabled={mutatingBusy || u.id === currentUserId}
+                            onClick={() => setDeleteTarget(u)}
+                          >
+                            <Trash2 className="w-4 h-4 mr-2 inline-block align-middle" />
+                            Obriši nalog
+                          </DropdownMenuItem>
                         </DropdownMenuContent>
                       </DropdownMenu>
                     )}
                   </div>
-                  <GenericBadge label={u.active ? "Aktivan" : "Neaktivan"} variant={u.active ? "success" : "muted"} />
+                  <div className="flex flex-wrap items-center justify-end gap-2 w-full">
+                    <GenericBadge label={u.active ? "Aktivan" : "Neaktivan"} variant={u.active ? "success" : "muted"} />
+                    {currentRole === "admin" && (
+                      <Switch
+                        checked={u.active}
+                        disabled={mutatingBusy || (u.id === currentUserId && u.active)}
+                        onCheckedChange={(checked) => void handleActiveChange(u.id, checked)}
+                      />
+                    )}
+                  </div>
                 </div>
               </div>
             ))}
@@ -282,6 +393,32 @@ export default function UsersPage() {
             </div>
           </DialogContent>
         </Dialog>
+
+        <AlertDialog open={!!deleteTarget} onOpenChange={(open) => !open && setDeleteTarget(null)}>
+          <AlertDialogContent>
+            <AlertDialogHeader>
+              <AlertDialogTitle>Obrisati korisnika?</AlertDialogTitle>
+              <AlertDialogDescription>
+                Trajno će biti uklonjen nalog za{" "}
+                <span className="font-medium text-foreground">
+                  {deleteTarget ? getDisplayName(deleteTarget.fullName, deleteTarget.name, deleteTarget.email) : ""}
+                </span>{" "}
+                ({deleteTarget?.email}). Ova radnja se ne može poništiti.
+              </AlertDialogDescription>
+            </AlertDialogHeader>
+            <AlertDialogFooter>
+              <AlertDialogCancel disabled={isRemovingUser}>Otkaži</AlertDialogCancel>
+              <Button
+                type="button"
+                variant="destructive"
+                disabled={isRemovingUser}
+                onClick={() => void confirmDeleteUser()}
+              >
+                {isRemovingUser ? "Brisanje…" : "Obriši"}
+              </Button>
+            </AlertDialogFooter>
+          </AlertDialogContent>
+        </AlertDialog>
       </PageTransition>
     </AppLayout>
   );

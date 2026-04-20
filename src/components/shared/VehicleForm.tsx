@@ -15,7 +15,7 @@ import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Checkbox } from "@/components/ui/checkbox";
-import { supabase } from "@/lib/supabase";
+import { buildVehiclePhotoKey, uploadFileToR2 } from "@/lib/r2-storage";
 import { toast } from "sonner";
 import { Loader2, Plus, Upload, X } from "lucide-react";
 import type { Vehicle, VehicleStatus } from "@/types";
@@ -133,11 +133,9 @@ export function VehicleForm({ initialData, workers, onSubmit, onCancel, isLoadin
 
   const uploadToStorage = async (file: File) => {
     const ext = file.name.split(".").pop() ?? "jpg";
-    const path = `vehicles/${Date.now()}_${Math.random().toString(36).slice(2)}.${ext}`;
-    const { error } = await supabase.storage.from("field-photos").upload(path, file);
-    if (error) throw error;
-    const { data } = supabase.storage.from("field-photos").getPublicUrl(path);
-    return data.publicUrl;
+    const unique = `${Date.now()}_${Math.random().toString(36).slice(2)}.${ext}`;
+    const key = buildVehiclePhotoKey(unique);
+    return uploadFileToR2(key, file);
   };
 
   const handleSingleImageUpload = async (

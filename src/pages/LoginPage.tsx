@@ -1,12 +1,16 @@
-import { useState, useEffect, useMemo } from "react";
+import { useState, useEffect, useMemo, useCallback } from "react";
 import { useNavigate, useLocation } from "react-router-dom";
 import { Hammer, Eye, EyeOff, Loader2 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
+import { AppSessionLoadingScreen } from "@/components/AppSessionLoadingScreen";
+import { AuthHydratingFallback } from "@/components/AuthHydratingFallback";
+import { hasRichSplashCompleted } from "@/lib/rich-splash-session";
 import { supabase } from "@/lib/supabase";
 import { useToast } from "@/hooks/use-toast";
 import { useAuthStore } from "@/stores/auth-store";
+
 export default function LoginPage() {
   const [fullName, setFullName] = useState("");
   const [email, setEmail] = useState("");
@@ -18,6 +22,8 @@ export default function LoginPage() {
   const navigate = useNavigate();
   const location = useLocation();
   const { isAuthenticated, user, isPendingApproval, authReady } = useAuthStore();
+  const [bootScreenDone, setBootScreenDone] = useState(() => hasRichSplashCompleted());
+  const onBootScreenComplete = useCallback(() => setBootScreenDone(true), []);
 
   const redirectAfterLogin = useMemo(() => {
     const from = (location.state as { from?: { pathname?: string } } | null)?.from?.pathname;
@@ -80,7 +86,8 @@ export default function LoginPage() {
         } else {
           toast({
             title: "Nalog kreiran",
-            description: "Uspešno ste se registrovali. Sada se možete prijaviti.",
+            description:
+              "Uspešno ste se registrovali. Prijavom ćete videti status naloga dok administrator ne dodeli ulogu.",
           });
           setFullName("");
           setIsRegistering(false);
@@ -120,12 +127,17 @@ export default function LoginPage() {
     }
   };
 
-  if (!authReady) {
+  if (!bootScreenDone) {
     return (
-      <div className="min-h-screen flex items-center justify-center bg-background p-4" aria-busy="true">
-        <div className="text-sm text-muted-foreground">Provera sesije...</div>
-      </div>
+      <AppSessionLoadingScreen
+        sessionReady={authReady}
+        onReadyVisualComplete={onBootScreenComplete}
+      />
     );
+  }
+
+  if (!authReady) {
+    return <AuthHydratingFallback />;
   }
 
   return (

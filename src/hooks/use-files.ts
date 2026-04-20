@@ -1,24 +1,37 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import type { QueryClient } from "@tanstack/react-query";
 import { supabase } from "@/lib/supabase";
 import type { AppFile, FileCategory } from "@/types";
 import { toast } from "sonner";
 import { upsertSystemActivity } from "@/lib/activity-automation";
 import { labelFileCategory } from "@/lib/activity-labels";
+import {
+  buildFieldPhotosFileKey,
+  buildJobFilesObjectKey,
+  buildMaterialOrderFileKey,
+  deleteObjectFromR2,
+  uploadFileToR2,
+} from "@/lib/r2-storage";
 
 export interface UploadFileInput {
   jobId?: string;
+  /** Prilog uz konkretnu narudžbinu (bilo koji tip fajla). */
+  materialOrderId?: string;
   category: FileCategory;
   file: File;
   uploadedBy: string;
 }
 
-type FileRow = {
+export type FileRow = {
   id: string;
   job_id?: string;
+  material_order_id?: string | null;
   filename: string;
   category: FileCategory;
   size: string;
   uploaded_at: string;
+  storage_key?: string | null;
+  storage_url?: string | null;
   users?: { name?: string } | { name?: string }[] | null;
 };
 
@@ -28,17 +41,33 @@ const getErrorMessage = (err: unknown) =>
     ? (err as ErrorWithMessage).message ?? "Nepoznata greška"
     : "Nepoznata greška";
 
+/** Prazan string nije validan UUID za `files.job_id` — mora biti null. */
+function toNullableJobId(jobId?: string | null): string | null {
+  if (jobId === undefined || jobId === null) return null;
+  const t = String(jobId).trim();
+  return t.length > 0 ? t : null;
+}
+
+function invalidateMaterialOrderFilesQueries(queryClient: QueryClient) {
+  return queryClient.invalidateQueries({
+    predicate: (q) => Array.isArray(q.queryKey) && q.queryKey[0] === "material-order-files",
+  });
+}
+
 export const mapDbToFile = (d: FileRow): AppFile => {
   const userData = Array.isArray(d.users) ? d.users[0] : d.users;
   return {
     id: d.id,
     jobId: d.job_id,
+    materialOrderId: d.material_order_id ?? undefined,
     name: d.filename,
     category: d.category,
     size: d.size,
     uploadedBy: userData?.name || "Sistem",
     uploadedAt: d.uploaded_at,
     type: "file",
+    storageKey: d.storage_key ?? undefined,
+    storageUrl: d.storage_url ?? undefined,
   };
 };
 
@@ -65,30 +94,32 @@ export function useFiles() {
 
   const uploadFile = useMutation({
     mutationFn: async (input: UploadFileInput) => {
-      const { jobId, category, file, uploadedBy } = input;
-      
-      // 1. Upload to Supabase Storage
-      const fileExt = file.name.split('.').pop();
+      const { jobId, materialOrderId, category, file, uploadedBy } = input;
+      const jobIdForDb = toNullableJobId(jobId);
+
+      // 1. R2: dokumenta → prefiks files/…; terenske foto (field_photos) → field-photos/…; narudžbina → files/material-orders/…
+      const fileExt = file.name.split(".").pop();
       const fileName = `${Date.now()}_${Math.random().toString(36).substring(7)}.${fileExt}`;
-      const filePath = jobId ? `jobs/${jobId}/${fileName}` : `misc/${fileName}`;
+      const objectKey = materialOrderId
+        ? buildMaterialOrderFileKey(materialOrderId, fileName)
+        : category === "field_photos"
+          ? buildFieldPhotosFileKey(jobIdForDb ?? undefined, fileName)
+          : buildJobFilesObjectKey(jobIdForDb ?? undefined, fileName);
+      const storageUrl = await uploadFileToR2(objectKey, file);
 
-      const { error: uploadError } = await supabase.storage
-        .from("files")
-        .upload(filePath, file);
-
-      if (uploadError) throw uploadError;
-
-      // 2. Insert into files table
+      // 2. Insert into files table (linkovanje kao ranije: job_id, category, …)
       const { data: dbData, error: dbError } = await supabase
         .from("files")
         .insert([{
-          job_id: jobId,
+          job_id: jobIdForDb,
+          material_order_id: materialOrderId ?? null,
           category,
           filename: file.name,
           size: formatSize(file.size),
           uploaded_by: uploadedBy,
           uploaded_at: new Date().toISOString(),
-          // storage_path: filePath // if column exists
+          storage_key: objectKey,
+          storage_url: storageUrl,
         }])
         .select(`
           *,
@@ -98,10 +129,13 @@ export function useFiles() {
 
       if (dbError) throw dbError;
 
-      if (jobId) {
+      if (jobIdForDb) {
+        const desc = materialOrderId
+          ? `Prilog narudžbine materijala: ${file.name}`
+          : `Dodat fajl (${labelFileCategory(category)}): ${file.name}`;
         await upsertSystemActivity({
-          jobId,
-          description: `Dodat fajl (${labelFileCategory(category)}): ${file.name}`,
+          jobId: jobIdForDb,
+          description: desc,
           systemKey: `file-uploaded:${dbData.id}`,
           authorId: uploadedBy,
         });
@@ -113,9 +147,13 @@ export function useFiles() {
         type: file.type.startsWith("image/") ? "image" : "file",
       } as AppFile;
     },
-    onSuccess: (_, variables) => {
-      if (variables.jobId) {
-        queryClient.invalidateQueries({ queryKey: ["files", variables.jobId] });
+    onSuccess: (data, variables) => {
+      const jobForList = toNullableJobId(data.jobId) ?? toNullableJobId(variables.jobId);
+      if (jobForList) {
+        queryClient.invalidateQueries({ queryKey: ["files", jobForList] });
+      }
+      if (variables.materialOrderId) {
+        void invalidateMaterialOrderFilesQueries(queryClient);
       }
       queryClient.invalidateQueries({ queryKey: ["files"] });
       queryClient.invalidateQueries({ queryKey: ["activities"] });
@@ -128,14 +166,30 @@ export function useFiles() {
 
   const deleteFile = useMutation({
     mutationFn: async (id: string) => {
-      // Note: In a real app, you'd also delete from Storage. 
-      // But we need the storage path which isn't in our current schema's files table.
-      // For now, just delete from DB.
+      const { data: row, error: fetchError } = await supabase
+        .from("files")
+        .select("storage_key, job_id, material_order_id")
+        .eq("id", id)
+        .single();
+      if (fetchError) throw fetchError;
+      if (row?.storage_key) {
+        await deleteObjectFromR2(row.storage_key);
+      }
       const { error } = await supabase.from("files").delete().eq("id", id);
       if (error) throw error;
+      return {
+        jobId: toNullableJobId(row?.job_id as string | null | undefined),
+        hadMaterialOrder: Boolean(row?.material_order_id),
+      };
     },
-    onSuccess: () => {
+    onSuccess: (meta) => {
       queryClient.invalidateQueries({ queryKey: ["files"] });
+      if (meta?.jobId) {
+        queryClient.invalidateQueries({ queryKey: ["files", meta.jobId] });
+      }
+      if (meta?.hadMaterialOrder) {
+        void invalidateMaterialOrderFilesQueries(queryClient);
+      }
       toast.success("Fajl obrisan");
     },
     onError: (err: unknown) => {

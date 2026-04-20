@@ -32,8 +32,11 @@ export function workOrderTypesForRole(role: UserRole | null | undefined): WorkOr
 }
 
 /** Tip izveštaja u modalu u zavisnosti od tipa radnog naloga. */
-export function fieldReportFlowForWorkOrderType(type: WorkOrderType | undefined): "mounting" | "field" {
+export function fieldReportFlowForWorkOrderType(
+  type: WorkOrderType | undefined,
+): "mounting" | "field" | "production" {
   if (type === "installation") return "mounting";
+  if (type === "production") return "production";
   return "field";
 }
 

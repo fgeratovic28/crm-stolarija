@@ -1,9 +1,10 @@
 export type JobStatus =
   | "new"
-  | "active"
-  | "in_progress"
-  | "waiting_materials"
+  | "quote_sent"
+  | "measuring"
+  | "in_production"
   | "scheduled"
+  | "installation_in_progress"
   | "completed"
   | "complaint"
   | "service";
@@ -72,6 +73,15 @@ export interface JobQuoteLine {
   unitPrice: number;
 }
 
+/** Timestamp-ovi akcija na terenu (čuva se u `field_reports.details`). */
+export interface FieldReportDetails {
+  arrivedAt?: string;
+  canceledAt?: string;
+  finishedAt?: string;
+  issueReportedAt?: string;
+  additionalReqAt?: string;
+}
+
 export interface Job {
   id: string;
   jobNumber: string;
@@ -84,6 +94,8 @@ export interface Job {
   advancePayment: number;
   unpaidBalance: number;
   createdAt: string;
+  /** Poslednja procena sati ugradnje sa merenja (kolona `jobs.estimated_installation_hours`). */
+  estimatedInstallationHours?: number | null;
   scheduledDate?: string;
   /** Jedinična cena stavki je sa PDV-om (ukupno = zbir stavki); inače bez PDV-a (PDV se dodaje na zbir). */
   pricesIncludeVat: boolean;
@@ -129,13 +141,27 @@ export interface Supplier {
   active: boolean;
 }
 
+/** Jedna stavka na narudžbini / porudžbenici (iznos bez PDV-a). */
+export interface MaterialOrderLine {
+  description: string;
+  quantity: number;
+  unit: string;
+  /** Ukupan iznos stavke bez PDV-a (RSD). */
+  lineNet: number;
+  materialType?: MaterialType;
+}
+
 export interface MaterialOrder {
   id: string;
+  /** Javni token za QR link ka istoj porudžbenici (bez CRM naloga). */
+  publicShareToken?: string;
   jobId?: string;
   materialType: MaterialType;
   supplierId: string;
   supplier: string; // Keep for backward compatibility/display
   supplierContact: string; // Keep for display
+  /** Adresa dobavljača (iz šifarnika), za štampu. */
+  supplierAddress?: string;
   orderDate: string; // This is the request date
   requestDate: string; // New: explicit request date
   deliveryDate?: string; // New: actual delivery date
@@ -155,6 +181,21 @@ export interface MaterialOrder {
     id: string;
     jobNumber: string;
   };
+  /** Stavke za štampu / javni prikaz (ukupna cena = zbir lineNet). */
+  nbLines?: MaterialOrderLine[];
+  /** Pun naziv stavke na narudžbenici (inače se koristi vrsta materijala). */
+  nbLineDescription?: string;
+  nbQuantity?: number;
+  nbUnit?: string;
+  /** Stopa PDV za obračun (npr. 20). */
+  nbVatRatePercent?: number;
+  nbBuyerBankAccount?: string;
+  nbShippingMethod?: string;
+  nbPaymentDueDate?: string;
+  nbPaymentNote?: string;
+  nbLegalReference?: string;
+  /** Isporuka na drugu adresu od podataka kupca u poslu. */
+  nbDeliveryAddressOverride?: string;
 }
 
 export interface WorkOrder {
@@ -163,6 +204,8 @@ export interface WorkOrder {
   type: WorkOrderType;
   description: string;
   assignedTeamId?: string;
+  /** Ime tima sa join-a `teams`, za prikaz (npr. detalji posla). */
+  assignedTeamName?: string;
   date: string;
   status: "pending" | "in_progress" | "completed" | "canceled";
   attachmentName?: string;
@@ -181,6 +224,9 @@ export interface FieldReport {
   jobCompleted: boolean;
   everythingOk: boolean;
   issueDescription?: string;
+  details?: FieldReportDetails;
+  /** Procena trajanja ugradnje u satima (merenje); kolona `field_reports.estimated_installation_hours`. */
+  estimatedInstallationHours?: number | null;
   handoverDate?: string;
   images: string[];
   missingItems: string[];
@@ -202,12 +248,18 @@ export interface FieldReport {
 export interface AppFile {
   id: string;
   jobId?: string;
+  /** Fajl vezan za narudžbinu materijala (prilozi) */
+  materialOrderId?: string;
   name: string;
   category: FileCategory;
   size: string;
   uploadedBy: string;
   uploadedAt: string;
   type: string;
+  /** R2 object key (npr. files/jobs/...) za brisanje; ako nedostaje, zapis je stariji */
+  storageKey?: string;
+  /** Javni URL u R2 (sačuvan pri otpremi) */
+  storageUrl?: string;
 }
 
 export interface Team {
@@ -224,7 +276,8 @@ export interface AppUser {
   name: string;
   fullName?: string;
   email: string;
-  role: UserRole;
+  /** null dok administrator ne dodeli ulogu u bazi. */
+  role: UserRole | null;
   avatar?: string;
   active: boolean;
   teamId?: string;
@@ -281,15 +334,56 @@ export interface WorkerSickLeave {
 
 export type Statuses = JobStatus;
 
-export const JOB_STATUS_CONFIG: Record<JobStatus, { label: string; color: string }> = {
-  new: { label: "Novi", color: "bg-info text-info-foreground" },
-  active: { label: "Aktivan", color: "bg-success text-success-foreground" },
-  in_progress: { label: "U toku", color: "bg-primary text-primary-foreground" },
-  waiting_materials: { label: "Čeka materijal", color: "bg-warning text-warning-foreground" },
-  scheduled: { label: "Zakazan", color: "bg-info text-info-foreground" },
-  completed: { label: "Završen", color: "bg-success text-success-foreground" },
-  complaint: { label: "Reklamacija", color: "bg-destructive text-destructive-foreground" },
-  service: { label: "Servis", color: "bg-muted text-muted-foreground" },
+export const JOB_STATUS_CONFIG: Record<
+  JobStatus,
+  { label: string; color: string; automationHint: string }
+> = {
+  new: {
+    label: "Upit",
+    color: "bg-slate-500/15 text-slate-700 dark:text-slate-200",
+    automationHint: "Početni status posla; prelazi u „Merenje“ kad teren započne RN merenja (ili ručno na „Ponuda poslata“).",
+  },
+  quote_sent: {
+    label: "Ponuda poslata",
+    color: "bg-sky-500/15 text-sky-800 dark:text-sky-200",
+    automationHint: "Menja se samo ručno iz padajuće liste (nema automatskog prelaza u ovaj status).",
+  },
+  measuring: {
+    label: "Merenje",
+    color: "bg-emerald-500/15 text-emerald-800 dark:text-emerald-200",
+    automationHint:
+      "Postoji RN merenja / kontrola mera koji još nije završen (na čekanju ili u toku). Posle završetka svih → „U proizvodnji“.",
+  },
+  in_production: {
+    label: "U proizvodnji",
+    color: "bg-amber-500/20 text-amber-900 dark:text-amber-100",
+    automationHint: "Merenje završeno; čeka se ili traje RN proizvodnje. Posle završetka proizvodnje → „Čeka ugradnju“.",
+  },
+  scheduled: {
+    label: "Čeka ugradnju",
+    color: "bg-indigo-500/15 text-indigo-800 dark:text-indigo-200",
+    automationHint: "Proizvodnja završena; RN ugradnje su na čekanju. Kad montaža krene → „Ugradnja u toku“.",
+  },
+  installation_in_progress: {
+    label: "Ugradnja u toku",
+    color: "bg-primary/15 text-primary",
+    automationHint: "RN ugradnja je u toku. Posle završetka, terenski izveštaj određuje „Završen“ ili „Reklamacija“.",
+  },
+  completed: {
+    label: "Završen",
+    color: "bg-success text-success-foreground",
+    automationHint: "Montaža završena i terenski izveštaj bez prijavljenog problema (ili ručno postavljeno).",
+  },
+  complaint: {
+    label: "Reklamacija",
+    color: "bg-destructive text-destructive-foreground",
+    automationHint: "Može automatski posle ugradnje ako izveštaj nije „sve u redu“. Dalje menjanje ručno.",
+  },
+  service: {
+    label: "Servis",
+    color: "bg-muted text-muted-foreground",
+    automationHint: "Menja se samo ručno (servisni režim); automatska pravila statusa se ne primenjuju.",
+  },
 };
 
 export const VEHICLE_STATUS_CONFIG: Record<
@@ -309,18 +403,18 @@ export const ROLE_CONFIG: Record<UserRole, { label: string; description: string;
   },
   office: {
     label: "Kancelarija / Prodaja",
-    description: "Upravljanje kupcima, poslovima, aktivnostima i ponudama. Ažuriranje statusa poslova.",
-    access: ["Kupci", "Poslovi", "Aktivnosti", "Ponude"],
+    description: "Upravljanje kupcima, poslovima, aktivnostima i dokumentima na poslu. Ažuriranje statusa poslova.",
+    access: ["Kupci", "Poslovi", "Aktivnosti", "Fajlovi na poslu"],
   },
   finance: {
     label: "Finansije",
-    description: "Upravljanje finansijama, fakturama, uplatama i finansijskim izveštajima.",
-    access: ["Finansije", "Fakture", "Plaćanja", "Izveštaji"],
+    description: "Upravljanje finansijama, uplatama i finansijskim izveštajima.",
+    access: ["Finansije", "Plaćanja", "Izveštaji"],
   },
   procurement: {
     label: "Nabavka",
     description: "Upravljanje narudžbinama materijala, dobavljačima i zalihama.",
-    access: ["Narudžbine materijala", "Dobavljači", "Zalihe"],
+    access: ["Narudžbine materijala", "Dobavljači", "Zalihe i vozila"],
   },
   production: {
     label: "Proizvodnja",

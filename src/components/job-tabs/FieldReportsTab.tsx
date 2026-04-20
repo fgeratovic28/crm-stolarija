@@ -1,25 +1,16 @@
 import { useState } from "react";
 import { useNavigate } from "react-router-dom";
-import { MapPin, CheckCircle, XCircle, Camera, AlertTriangle, FileText, Plus } from "lucide-react";
+import { MapPin, CheckCircle, XCircle, AlertTriangle, FileText, Plus } from "lucide-react";
 import { GenericBadge } from "@/components/shared/StatusBadge";
 import { EmptyState } from "@/components/shared/EmptyState";
 import { SectionHeader } from "@/components/shared/SectionHeader";
 import { Button } from "@/components/ui/button";
 import { FieldReportDetailModal } from "@/components/modals/FieldReportDetailModal";
 import { NewFieldReportModal } from "@/components/modals/NewFieldReportModal";
+import { ImageLightbox } from "@/components/shared/ImageLightbox";
 import { useRole } from "@/contexts/RoleContext";
 import type { FieldReport } from "@/types";
-
-const typeLabels: Record<string, string> = {
-  measurement: "Merenje",
-  measurement_verification: "Provera mera",
-  installation: "Ugradnja",
-  complaint: "Reklamacija",
-  service: "Servis",
-  production: "Proizvodni nalog",
-  site_visit: "Terenska poseta",
-  control_visit: "Kontrolna poseta",
-};
+import { labelWorkOrderType } from "@/lib/activity-labels";
 
 export function FieldReportsTab({ reports }: { reports: FieldReport[] }) {
   const navigate = useNavigate();
@@ -27,6 +18,7 @@ export function FieldReportsTab({ reports }: { reports: FieldReport[] }) {
   const [selectedReport, setSelectedReport] = useState<FieldReport | null>(null);
   const [detailOpen, setDetailOpen] = useState(false);
   const [createOpen, setCreateOpen] = useState(false);
+  const [lightboxSrc, setLightboxSrc] = useState<string | null>(null);
 
   const canAdd =
     canPerformAction("add_field_report") || canPerformAction("add_mounting_report");
@@ -55,7 +47,7 @@ export function FieldReportsTab({ reports }: { reports: FieldReport[] }) {
                         <p className="font-medium text-foreground text-sm">{r.address}</p>
                         {r.workOrderType && (
                           <span className="text-[10px] bg-primary/10 text-primary px-1.5 py-0.5 rounded font-medium">
-                            {typeLabels[r.workOrderType]}
+                            {labelWorkOrderType(r.workOrderType)}
                           </span>
                         )}
                       </div>
@@ -118,13 +110,23 @@ export function FieldReportsTab({ reports }: { reports: FieldReport[] }) {
                 )}
 
                 {r.images.length > 0 && (
-                  <div>
+                  <div onClick={(e) => e.stopPropagation()}>
                     <p className="text-xs font-medium text-muted-foreground mb-2">Fotografije ({r.images.length})</p>
                     <div className="grid grid-cols-4 sm:grid-cols-6 gap-2">
                       {r.images.map((img, i) => (
-                        <div key={i} className="aspect-square bg-muted rounded-lg flex items-center justify-center">
-                          <Camera className="w-4 h-4 text-muted-foreground" />
-                        </div>
+                        <button
+                          key={i}
+                          type="button"
+                          onClick={() => setLightboxSrc(img)}
+                          className="aspect-square bg-muted rounded-lg overflow-hidden border border-border cursor-zoom-in focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring p-0"
+                        >
+                          <img
+                            src={img}
+                            alt=""
+                            className="w-full h-full object-cover pointer-events-none"
+                            loading="lazy"
+                          />
+                        </button>
                       ))}
                     </div>
                   </div>
@@ -137,6 +139,7 @@ export function FieldReportsTab({ reports }: { reports: FieldReport[] }) {
 
       <FieldReportDetailModal report={selectedReport} open={detailOpen} onOpenChange={setDetailOpen} />
       <NewFieldReportModal open={createOpen} onOpenChange={setCreateOpen} />
+      <ImageLightbox src={lightboxSrc} onClose={() => setLightboxSrc(null)} />
     </div>
   );
 }

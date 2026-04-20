@@ -6,6 +6,7 @@ import { useMaintenanceModeQuery } from "@/hooks/use-maintenance-mode";
 import { Button } from "@/components/ui/button";
 import { performClientSignOut } from "@/lib/sign-out";
 import { MaintenanceUnlockText } from "@/components/MaintenanceUnlockText";
+import { MaintenanceCheckingScreen } from "@/components/MaintenanceCheckingScreen";
 
 type MaintenanceModeGateProps = {
   children: React.ReactNode;
@@ -22,11 +23,7 @@ export function MaintenanceModeGate({ children }: MaintenanceModeGateProps) {
   const { data: maintenanceOn, isLoading, isError } = useMaintenanceModeQuery(true);
 
   if (isLoading) {
-    return (
-      <div className="flex min-h-screen w-full items-center justify-center bg-background" aria-busy="true">
-        <div className="text-sm text-muted-foreground">{t("maintenance.checking")}</div>
-      </div>
-    );
+    return <MaintenanceCheckingScreen />;
   }
 
   if (!isError && maintenanceOn === true) {

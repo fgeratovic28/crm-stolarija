@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import { useNavigate, useSearchParams } from "react-router-dom";
 import { Users, Search, Trash2, Briefcase, Plus, Edit2, Phone, Mail, FileSpreadsheet } from "lucide-react";
 import { AppLayout } from "@/components/layout/AppLayout";
@@ -19,6 +19,8 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { useJobs } from "@/hooks/use-jobs";
 import { useCustomers } from "@/hooks/use-customers";
 import { formatCurrencyBySettings, readAppSettingsCache } from "@/lib/app-settings";
+import { cn } from "@/lib/utils";
+import { jobPrimaryPhone } from "@/lib/job-contact-phone";
 import type { Job, Customer } from "@/types";
 import { ImportExcelButton } from "@/components/shared/ImportExcelButton";
 
@@ -26,10 +28,15 @@ const filterConfigs: FilterConfig[] = [
   {
     key: "status", label: "Status",
     options: [
-      { value: "new", label: "Novi" }, { value: "active", label: "Aktivan" },
-      { value: "in_progress", label: "U toku" }, { value: "waiting_materials", label: "Čeka materijal" },
-      { value: "scheduled", label: "Zakazan" }, { value: "completed", label: "Završen" },
-      { value: "complaint", label: "Reklamacija" }, { value: "service", label: "Servis" },
+      { value: "new", label: "Upit" },
+      { value: "quote_sent", label: "Ponuda poslata" },
+      { value: "measuring", label: "Merenje" },
+      { value: "in_production", label: "U proizvodnji" },
+      { value: "scheduled", label: "Čeka ugradnju" },
+      { value: "installation_in_progress", label: "Ugradnja u toku" },
+      { value: "completed", label: "Završen" },
+      { value: "complaint", label: "Reklamacija" },
+      { value: "service", label: "Servis" },
     ],
   },
   {
@@ -43,20 +50,46 @@ const filterConfigs: FilterConfig[] = [
 
 export default function JobsListPage() {
   const navigate = useNavigate();
-  const [searchParams] = useSearchParams();
+  const [searchParams, setSearchParams] = useSearchParams();
   const initialStatus = searchParams.get("status") || "all";
+  const tabFromUrl = searchParams.get("tab");
   const [search, setSearch] = useState("");
   const [customerSearch, setCustomerSearch] = useState("");
   const [filters, setFilters] = useState<Record<string, string>>({ status: initialStatus, payment: "all" });
-  const [activeTab, setActiveTab] = useState("jobs");
-  const { canPerformAction } = useRole();
+  const [activeTab, setActiveTab] = useState<"jobs" | "customers">(
+    tabFromUrl === "customers" ? "customers" : "jobs",
+  );
+  const { canPerformAction, hasAccess } = useRole();
+  const showCustomersTab = hasAccess("customers");
+
+  useEffect(() => {
+    const t = searchParams.get("tab");
+    if (t === "customers" && !showCustomersTab) {
+      setSearchParams(
+        (prev) => {
+          const p = new URLSearchParams(prev);
+          p.set("tab", "jobs");
+          return p;
+        },
+        { replace: true },
+      );
+      setActiveTab("jobs");
+      return;
+    }
+    setActiveTab(t === "customers" ? "customers" : "jobs");
+  }, [searchParams, showCustomersTab, setSearchParams]);
 
   const { jobs = [], isLoading: loadingJobs, deleteJob } = useJobs();
   const { customers = [], isLoading: loadingCustomers, createCustomer, deleteCustomer } = useCustomers();
   const appSettings = readAppSettingsCache();
 
   const filteredJobs = jobs.filter((j) => {
-    const matchSearch = !search || j.customer.fullName.toLowerCase().includes(search.toLowerCase()) || j.jobNumber.toLowerCase().includes(search.toLowerCase());
+    const phoneHay = jobPrimaryPhone(j).toLowerCase();
+    const matchSearch =
+      !search ||
+      j.customer.fullName.toLowerCase().includes(search.toLowerCase()) ||
+      j.jobNumber.toLowerCase().includes(search.toLowerCase()) ||
+      phoneHay.includes(search.toLowerCase());
     const matchStatus = filters.status === "all" || j.status === filters.status;
     const matchPayment = filters.payment === "all" ||
       (filters.payment === "paid" && j.unpaidBalance === 0) ||
@@ -77,6 +110,20 @@ export default function JobsListPage() {
 
   const formatCurrency = (n: number) => formatCurrencyBySettings(n);
 
+  const handleTabChange = (value: string) => {
+    const next = value === "customers" ? "customers" : "jobs";
+    setActiveTab(next);
+    setSearchParams(
+      (prev) => {
+        const p = new URLSearchParams(prev);
+        if (next === "jobs") p.set("tab", "jobs");
+        else p.set("tab", "customers");
+        return p;
+      },
+      { replace: true },
+    );
+  };
+
   const handleFilterChange = (key: string, value: string) => setFilters(prev => ({ ...prev, [key]: value }));
   const handleFilterReset = () => setFilters({ status: "all", payment: "all" });
 
@@ -85,11 +132,11 @@ export default function JobsListPage() {
   if (loading) return <AppLayout title="Učitavanje..."><TableSkeleton rows={6} cols={6} /></AppLayout>;
 
   return (
-    <AppLayout title="Kupci i Poslovi">
+    <AppLayout title={showCustomersTab ? "Kupci i Poslovi" : "Poslovi"}>
       <PageTransition>
-        <Breadcrumbs items={[{ label: "Kupci / Poslovi" }]} />
+        <Breadcrumbs items={[{ label: showCustomersTab ? "Kupci / Poslovi" : "Poslovi" }]} />
         <PageHeader
-          title="Kupci / Poslovi"
+          title={showCustomersTab ? "Kupci / Poslovi" : "Poslovi"}
           description={activeTab === "jobs" ? `${filteredJobs.length} od ${jobs.length} poslova` : `${filteredCustomers.length} od ${customers.length} klijenta`}
           icon={Users}
           actions={
@@ -132,14 +179,16 @@ export default function JobsListPage() {
           }
         />
 
-        <Tabs defaultValue="jobs" className="space-y-4" onValueChange={setActiveTab}>
-          <TabsList>
+        <Tabs value={activeTab} className="space-y-4" onValueChange={handleTabChange}>
+          <TabsList className={cn(!showCustomersTab && "hidden")}>
             <TabsTrigger value="jobs" className="flex items-center gap-2">
               <Briefcase className="w-4 h-4" /> Poslovi
             </TabsTrigger>
-            <TabsTrigger value="customers" className="flex items-center gap-2">
-              <Users className="w-4 h-4" /> Klijenti
-            </TabsTrigger>
+            {showCustomersTab && (
+              <TabsTrigger value="customers" className="flex items-center gap-2">
+                <Users className="w-4 h-4" /> Klijenti
+              </TabsTrigger>
+            )}
           </TabsList>
 
           <TabsContent value="jobs">
@@ -187,7 +236,7 @@ export default function JobsListPage() {
                               <p className="text-sm font-medium text-foreground">{job.customer.fullName}</p>
                               <p className="text-xs text-muted-foreground truncate max-w-48">{job.customer.installationAddress}</p>
                             </td>
-                            <td className="px-4 lg:px-5 py-3 text-sm text-muted-foreground">{job.customer.phones[0]}</td>
+                            <td className="px-4 lg:px-5 py-3 text-sm text-muted-foreground">{jobPrimaryPhone(job) || "—"}</td>
                             <td className="px-4 lg:px-5 py-3">
                               <div className="flex items-center gap-1.5">
                                 <StatusBadge status={job.status} />
@@ -256,6 +305,7 @@ export default function JobsListPage() {
             </div>
           </TabsContent>
 
+          {showCustomersTab && (
           <TabsContent value="customers">
             <div className="bg-card rounded-xl border border-border">
               <div className="p-3 sm:p-4 border-b border-border">
@@ -320,6 +370,7 @@ export default function JobsListPage() {
               )}
             </div>
           </TabsContent>
+          )}
         </Tabs>
       </PageTransition>
     </AppLayout>

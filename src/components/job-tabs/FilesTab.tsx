@@ -9,7 +9,7 @@ import { UploadFileModal } from "@/components/modals/UploadFileModal";
 import { useRole } from "@/contexts/RoleContext";
 import { useFiles } from "@/hooks/use-files";
 import { formatDateByAppLanguage } from "@/lib/app-settings";
-import { supabase } from "@/lib/supabase";
+import { publicUrlForStorageKey } from "@/lib/r2-storage";
 import { toast } from "sonner";
 import type { AppFile } from "@/types";
 
@@ -30,22 +30,18 @@ export function FilesTab({ files }: { files: AppFile[] }) {
 
   const handleDownload = async (file: AppFile) => {
     try {
-      // In a real app, we'd need the storage path. 
-      // Assuming it's jobs/jobId/filename or similar as per our upload hook.
-      // For now, we try to find it by filename in the jobs/jobId folder if jobId exists.
-      const path = file.jobId ? `jobs/${file.jobId}/` : `misc/`;
-      
-      // We need to find the actual filename in storage (which has a timestamp)
-      // Since our schema doesn't store storage_path, this is tricky.
-      // Let's assume for now we can list files and find it, or ideally 
-      // the schema should have storage_path.
-      
-      // Simplified: Just show a toast for now as we don't have storage_path in DB yet.
-      // In a real implementation, I'd add storage_path to the files table.
-      toast.info("Preuzimanje...", { description: file.name });
-      
-      // If we had the path:
-      // const { data, error } = await supabase.storage.from('files').download(file.storage_path);
+      if (file.storageUrl) {
+        window.open(file.storageUrl, "_blank", "noopener,noreferrer");
+        return;
+      }
+      if (file.storageKey) {
+        const url = publicUrlForStorageKey(file.storageKey);
+        window.open(url, "_blank", "noopener,noreferrer");
+        return;
+      }
+      toast.info("Preuzimanje nije dostupno", {
+        description: "Ovaj zapis nema URL ni ključ skladišta (stariji upload).",
+      });
     } catch (err) {
       toast.error("Greška pri preuzimanju");
     }
@@ -113,8 +109,9 @@ export function FilesTab({ files }: { files: AppFile[] }) {
                       </Button>
                     }
                     title="Obrisati ovaj fajl?"
-                    description={`"${f.name}" će biti trajno uklonjen. Ova radnja se ne može poništiti.`}
+                    description={`„${f.name}” će biti uklonjen sa skladišta. Ova radnja se ne može poništiti.`}
                     confirmLabel="Obriši fajl"
+                    cancelLabel="Otkaži"
                     onConfirm={() => handleDelete(f)}
                   />
                 )}

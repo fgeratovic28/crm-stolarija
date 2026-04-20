@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
-import { Menu, Bell, Search, DollarSign, Truck, Calendar, AlertTriangle, CheckCheck, UserCog, LogOut, User, Clock } from "lucide-react";
+import { Menu, Bell, Search, DollarSign, Truck, Calendar, AlertTriangle, CheckCheck, UserCog, LogOut, User, Clock, Settings } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
@@ -49,7 +49,7 @@ function timeAgo(timestamp: string): string {
 export function AppHeader({ onToggleSidebar, onMobileMenuToggle }: AppHeaderProps) {
   const queryClient = useQueryClient();
   const navigate = useNavigate();
-  const { currentRole, currentUserName } = useRole();
+  const { currentRole, currentUserName, hasAccess } = useRole();
   const isFieldWorkerUi = currentRole === "montaza" || currentRole === "teren";
   const authUserId = useAuthStore(state => state.user?.id ?? "guest");
   const { jobs: jobsList } = useJobs();
@@ -292,9 +292,14 @@ export function AppHeader({ onToggleSidebar, onMobileMenuToggle }: AppHeaderProp
           <DropdownMenuContent align="end" className="w-56">
             <DropdownMenuLabel>Moj nalog</DropdownMenuLabel>
             <DropdownMenuSeparator />
-            <DropdownMenuItem onSelect={() => navigate("/settings")}>
+            <DropdownMenuItem onSelect={() => navigate("/profile")}>
               <User className="w-4 h-4 mr-2" /> Profil
             </DropdownMenuItem>
+            {hasAccess("settings") && (
+              <DropdownMenuItem onSelect={() => navigate("/settings")}>
+                <Settings className="w-4 h-4 mr-2" /> Podešavanja
+              </DropdownMenuItem>
+            )}
             {currentRole === 'admin' && (
               <DropdownMenuItem onSelect={() => navigate("/users")}>
                 <UserCog className="w-4 h-4 mr-2" /> Korisnici

@@ -7,6 +7,8 @@ import { isFieldExecutionRole } from "@/lib/field-team-access";
 export type FieldTeamJobEmbed = {
   id: string;
   jobNumber: string;
+  /** Telefon za ovaj posao (često jedini unos ako se razlikuje od kartice klijenta). */
+  customerPhone?: string | null;
   installationAddress?: string;
   summary?: string;
   installationLat?: number | null;
@@ -42,6 +44,8 @@ function mapWorkOrderRow(d: Record<string, unknown>): FieldTeamWorkOrder {
       ? {
           id: jobRaw.id as string,
           jobNumber: jobRaw.job_number as string,
+          customerPhone:
+            typeof jobRaw.customer_phone === "string" ? jobRaw.customer_phone : null,
           installationAddress:
             typeof jobRaw.installation_address === "string" ? jobRaw.installation_address : undefined,
           summary: typeof jobRaw.summary === "string" ? jobRaw.summary : undefined,
@@ -71,6 +75,7 @@ export function useFieldTeamData() {
           job:jobs!inner (
             id,
             job_number,
+            customer_phone,
             installation_address,
             installation_lat,
             installation_lng,
@@ -87,6 +92,7 @@ export function useFieldTeamData() {
           job:jobs!inner (
             id,
             job_number,
+            customer_phone,
             installation_address,
             summary,
             customer:customers (

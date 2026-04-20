@@ -2,6 +2,7 @@ import { NavLink, useLocation } from "react-router-dom";
 import {
   LayoutDashboard, Users, Activity, DollarSign, Package, ClipboardList,
   FileText, FolderOpen, Shield, Settings, X, Hammer, Truck, Briefcase, Layers, Wrench, ChevronDown, MapPinned,
+  Receipt,
 } from "lucide-react";
 import type { LucideIcon } from "lucide-react";
 import { useMemo, useState } from "react";
@@ -28,18 +29,28 @@ interface NavGroup {
 const dashboardItem: NavItem = { to: "/", icon: LayoutDashboard, labelKey: "nav.dashboard", module: "dashboard" };
 const settingsItem: NavItem = { to: "/settings", icon: Settings, labelKey: "nav.settings", module: "settings" };
 
-const navGroups: NavGroup[] = [
-  {
-    id: "sales-finance",
-    label: "Prodaja i Finansije",
-    icon: DollarSign,
-    children: [
-      { to: "/jobs", icon: Briefcase, labelKey: "nav.jobs", module: "jobs" },
-      { to: "/jobs-map", icon: MapPinned, labelKey: "nav.completedJobsMap", module: "jobs" },
-      { to: "/activities", icon: Activity, labelKey: "nav.activities", module: "activities" },
-      { to: "/finances", icon: DollarSign, labelKey: "nav.finances", module: "finances" },
-    ],
-  },
+const salesFinanceBaseChildren: NavItem[] = [
+  { to: "/jobs?tab=customers", icon: Users, labelKey: "nav.customers", module: "customers" },
+  { to: "/jobs?tab=jobs", icon: Briefcase, labelKey: "nav.jobsOnly", module: "jobs" },
+  { to: "/jobs-map", icon: MapPinned, labelKey: "nav.completedJobsMap", module: "jobs" },
+  { to: "/activities", icon: Activity, labelKey: "nav.activities", module: "activities" },
+];
+
+/** Tri stavke samo za ulogu `finance`; ostali (admin, kancelarija, …) vide jednu „Finansije“. */
+const financeNavSplit: NavItem[] = [
+  { to: "/finances?tab=overview", icon: DollarSign, labelKey: "nav.financeOverview", module: "finances" },
+  { to: "/finances?tab=payments", icon: Receipt, labelKey: "nav.financePayments", module: "finances" },
+  { to: "/finances?tab=reports", icon: FileText, labelKey: "nav.financeReports", module: "finances" },
+];
+
+const financeNavSingle: NavItem = {
+  to: "/finances?tab=overview",
+  icon: DollarSign,
+  labelKey: "nav.finances",
+  module: "finances",
+};
+
+const navGroupsTail: NavGroup[] = [
   {
     id: "resources-procurement",
     label: "Resursi i Nabavka",
@@ -72,23 +83,37 @@ const navGroups: NavGroup[] = [
   },
 ];
 
-const allNavItems: NavItem[] = [
-  { to: "/", icon: LayoutDashboard, labelKey: "nav.dashboard", module: "dashboard" },
-  { to: "/jobs", icon: Briefcase, labelKey: "nav.jobs", module: "jobs" },
-  { to: "/jobs-map", icon: MapPinned, labelKey: "nav.completedJobsMap", module: "jobs" },
-  { to: "/activities", icon: Activity, labelKey: "nav.activities", module: "activities" },
-  { to: "/finances", icon: DollarSign, labelKey: "nav.finances", module: "finances" },
-  { to: "/material-orders", icon: Package, labelKey: "nav.materialOrders", module: "material-orders" },
-  { to: "/suppliers", icon: Truck, labelKey: "nav.suppliers", module: "suppliers" },
-  { to: "/vehicles", icon: Truck, labelKey: "nav.vehicles", module: "vehicles" },
-  { to: "/workers", icon: Users, labelKey: "nav.workers", module: "workers" },
-  { to: "/work-orders", icon: ClipboardList, labelKey: "nav.workOrders", module: "work-orders" },
-  { to: "/field-reports", icon: FileText, labelKey: "nav.fieldReports", module: "field-reports" },
-  { to: "/files", icon: FolderOpen, labelKey: "nav.files", module: "files" },
-  { to: "/teams", icon: Users, labelKey: "nav.teams", module: "teams" },
-  { to: "/users", icon: Shield, labelKey: "nav.users", module: "users" },
-  { to: "/settings", icon: Settings, labelKey: "nav.settings", module: "settings" },
-];
+function getNavGroups(role: UserRole | null): NavGroup[] {
+  const financeChildren = role === "finance" ? financeNavSplit : [financeNavSingle];
+  return [
+    {
+      id: "sales-finance",
+      label: "Prodaja i Finansije",
+      icon: DollarSign,
+      children: [...salesFinanceBaseChildren, ...financeChildren],
+    },
+    ...navGroupsTail,
+  ];
+}
+
+function getAllNavItems(role: UserRole | null): NavItem[] {
+  const financeItems = role === "finance" ? financeNavSplit : [financeNavSingle];
+  return [
+    { to: "/", icon: LayoutDashboard, labelKey: "nav.dashboard", module: "dashboard" },
+    ...salesFinanceBaseChildren,
+    ...financeItems,
+    { to: "/material-orders", icon: Package, labelKey: "nav.materialOrders", module: "material-orders" },
+    { to: "/suppliers", icon: Truck, labelKey: "nav.suppliers", module: "suppliers" },
+    { to: "/vehicles", icon: Truck, labelKey: "nav.vehicles", module: "vehicles" },
+    { to: "/workers", icon: Users, labelKey: "nav.workers", module: "workers" },
+    { to: "/work-orders", icon: ClipboardList, labelKey: "nav.workOrders", module: "work-orders" },
+    { to: "/field-reports", icon: FileText, labelKey: "nav.fieldReports", module: "field-reports" },
+    { to: "/files", icon: FolderOpen, labelKey: "nav.files", module: "files" },
+    { to: "/teams", icon: Users, labelKey: "nav.teams", module: "teams" },
+    { to: "/users", icon: Shield, labelKey: "nav.users", module: "users" },
+    { to: "/settings", icon: Settings, labelKey: "nav.settings", module: "settings" },
+  ];
+}
 
 interface AppSidebarProps {
   open: boolean;
@@ -96,34 +121,51 @@ interface AppSidebarProps {
   onMobileClose: () => void;
 }
 
-function isRouteActive(pathname: string, to: string): boolean {
+function isRouteActive(pathname: string, search: string, to: string): boolean {
   if (to === "/") return pathname === "/";
-  return pathname === to || pathname.startsWith(`${to}/`);
+  const [basePath, queryPart] = to.split("?");
+  const pathMatches = pathname === basePath || pathname.startsWith(`${basePath}/`);
+  if (!pathMatches) return false;
+  if (!queryPart) return true;
+  const wanted = new URLSearchParams(queryPart);
+  const current = new URLSearchParams(search);
+  for (const [k, v] of wanted.entries()) {
+    if (current.get(k) !== v) return false;
+  }
+  return true;
 }
 
 export function AppSidebar({ open, mobileOpen, onMobileClose }: AppSidebarProps) {
   const location = useLocation();
+  const locSearch = location.search;
   const { hasAccess, currentUserName, currentRole } = useRole();
   const { t } = useI18n();
   const [expandedGroups, setExpandedGroups] = useState<Record<string, boolean>>({});
 
-  const visibleItems = useMemo(() => allNavItems.filter(item => hasAccess(item.module)), [hasAccess]);
+  const navGroups = useMemo(() => getNavGroups(currentRole), [currentRole]);
+  const allNavItems = useMemo(() => getAllNavItems(currentRole), [currentRole]);
+
+  const visibleItems = useMemo(
+    () => allNavItems.filter((item) => hasAccess(item.module)),
+    [allNavItems, hasAccess],
+  );
   const visibleDashboard = hasAccess(dashboardItem.module);
   const visibleSettings = hasAccess(settingsItem.module);
   const visibleGroups = useMemo(
-    () => navGroups
-      .map((group) => ({ ...group, children: group.children.filter((child) => hasAccess(child.module)) }))
-      .filter((group) => group.children.length > 0),
-    [hasAccess]
+    () =>
+      navGroups
+        .map((group) => ({ ...group, children: group.children.filter((child) => hasAccess(child.module)) }))
+        .filter((group) => group.children.length > 0),
+    [hasAccess, navGroups],
   );
 
   const activeGroupIds = useMemo(() => {
     return visibleGroups
       .filter((group) =>
-        group.children.some((item) => isRouteActive(location.pathname, item.to))
+        group.children.some((item) => isRouteActive(location.pathname, locSearch, item.to))
       )
       .map((group) => group.id);
-  }, [location.pathname, visibleGroups]);
+  }, [location.pathname, locSearch, visibleGroups]);
 
   const toggleGroup = (groupId: string) => {
     if (activeGroupIds.includes(groupId)) return;
@@ -154,7 +196,7 @@ export function AppSidebar({ open, mobileOpen, onMobileClose }: AppSidebarProps)
                   onClick={onMobileClose}
                   className={cn(
                     "flex items-center gap-3 px-3 py-2.5 rounded-lg text-[15px] font-semibold transition-colors border border-transparent",
-                    location.pathname === "/"
+                    isRouteActive(location.pathname, locSearch, dashboardItem.to)
                       ? "bg-sidebar-accent text-sidebar-primary border-sidebar-border/80 shadow-sm"
                       : "text-sidebar-foreground hover:bg-sidebar-accent hover:text-sidebar-accent-foreground"
                   )}
@@ -198,10 +240,10 @@ export function AppSidebar({ open, mobileOpen, onMobileClose }: AppSidebarProps)
                   >
                     <div className="overflow-hidden space-y-0.5 pl-2.5 pr-1">
                       {group.children.map((item) => {
-                        const isActive = isRouteActive(location.pathname, item.to);
+                        const isActive = isRouteActive(location.pathname, locSearch, item.to);
                         return (
                           <NavLink
-                            key={item.to}
+                            key={`${item.labelKey}-${item.to}`}
                             to={item.to}
                             onClick={onMobileClose}
                             className={cn(
@@ -247,10 +289,10 @@ export function AppSidebar({ open, mobileOpen, onMobileClose }: AppSidebarProps)
           </>
         ) : (
           visibleItems.map((item) => {
-            const isActive = isRouteActive(location.pathname, item.to);
+            const isActive = isRouteActive(location.pathname, locSearch, item.to);
             return (
               <NavLink
-                key={item.to}
+                key={`${item.labelKey}-${item.to}`}
                 to={item.to}
                 onClick={onMobileClose}
                 className={cn(

@@ -2,6 +2,7 @@ import { UserRole } from "@/types";
 
 export type ModuleName =
   | "dashboard"
+  | "customers"
   | "jobs"
   | "activities"
   | "finances"
@@ -48,9 +49,11 @@ export type ActionName =
   | "update_production_status"
   | "view_own_team_only";
 
+/** Pristup modulima po ulozi. Svaka uloga uvek uključuje `dashboard` (kontrolna tabla). */
 export const MODULE_ACCESS: Record<UserRole, ModuleName[]> = {
   admin: [
     "dashboard",
+    "customers",
     "jobs",
     "activities",
     "finances",
@@ -65,8 +68,10 @@ export const MODULE_ACCESS: Record<UserRole, ModuleName[]> = {
     "teams",
     "settings",
   ],
-  office: ["dashboard", "jobs", "activities", "files"],
-  finance: ["dashboard", "jobs", "finances", "files"],
+  /** Kupci, Poslovi, Aktivnosti; fajlovi na nivou posla (prilozi). */
+  office: ["dashboard", "customers", "jobs", "activities", "files"],
+  /** Dashboard + poslovi (evidencija uplata na poslu) + finansijski modul (tri dela: Finansije / Plaćanja / Izveštaji). */
+  finance: ["dashboard", "jobs", "finances"],
   procurement: ["dashboard", "jobs", "material-orders", "suppliers", "vehicles", "files"],
   production: ["dashboard", "jobs", "work-orders", "files"],
   montaza: ["dashboard", "work-orders"],

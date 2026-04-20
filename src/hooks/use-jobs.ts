@@ -9,6 +9,7 @@ import { MODULE_ACCESS } from "@/config/permissions";
 import type { UserRole } from "@/types";
 import { upsertSystemActivity } from "@/lib/activity-automation";
 import { labelJobStatus } from "@/lib/activity-labels";
+import { ensureWorkflowWorkOrders } from "@/lib/work-order-workflow-automation";
 
 const VAT_RATE = 0.2;
 const CREATE_JOB_ACTIVITY = { key: "initial-entry", description: "početni unos" } as const;
@@ -23,8 +24,7 @@ const JOB_SELECT_FULL = `
   *,
   customers (*),
   payments (amount),
-  job_quote_lines (*),
-  creator:users!jobs_created_by_fkey ( id, name )
+  job_quote_lines (*)
 `;
 
 async function loadJobsRows(): Promise<Record<string, unknown>[]> {
@@ -41,6 +41,21 @@ async function loadJobRow(id: string): Promise<Record<string, unknown>> {
   const q2 = await supabase.from("jobs").select(JOB_SELECT_MIN).eq("id", id).single();
   if (q2.error) throw q2.error;
   return q2.data as Record<string, unknown>;
+}
+
+async function resolveJobCreatorDisplayName(userId: string | null): Promise<string | null> {
+  if (!userId) return null;
+  const { data, error } = await supabase
+    .from("users")
+    .select("name, full_name")
+    .eq("id", userId)
+    .maybeSingle();
+  if (error || !data) return null;
+  const row = data as { name?: string | null; full_name?: string | null };
+  const full = typeof row.full_name === "string" ? row.full_name.trim() : "";
+  const short = typeof row.name === "string" ? row.name.trim() : "";
+  const n = full || short;
+  return n.length > 0 ? n : null;
 }
 
 async function reserveNextJobNumber(prefix: string): Promise<string> {
@@ -109,15 +124,43 @@ export const mapDbToJob = (db: Record<string, unknown>): Job => {
   const priceWithoutVat = totalPrice - vatAmount;
   const advancePayment = Number(db.advance_payment) || 0;
 
+  const createdByIdRaw = db.created_by;
+  const createdById =
+    typeof createdByIdRaw === "string" && createdByIdRaw.length > 0
+      ? createdByIdRaw
+      : typeof createdByIdRaw === "number"
+        ? String(createdByIdRaw)
+        : null;
+
+  const snapshot =
+    typeof db.created_by_name === "string" ? db.created_by_name.trim() : "";
+
   const creatorRaw = db.creator as Record<string, unknown> | Record<string, unknown>[] | null | undefined;
   const creatorOne = Array.isArray(creatorRaw) ? creatorRaw[0] : creatorRaw;
+  const fromEmbed = (() => {
+    const full = typeof creatorOne?.full_name === "string" ? creatorOne.full_name.trim() : "";
+    const short = typeof creatorOne?.name === "string" ? creatorOne.name.trim() : "";
+    return full || short || "";
+  })();
+
+  const displayName = snapshot || fromEmbed;
   const createdBy =
-    creatorOne?.id && creatorOne?.name
-      ? { id: String(creatorOne.id), name: String(creatorOne.name) }
-      : undefined;
+    createdById && displayName
+      ? { id: createdById, name: displayName }
+      : createdById
+        ? { id: createdById, name: "Nepoznat korisnik" }
+        : undefined;
 
   const jobBill = typeof db.billing_address === "string" ? db.billing_address.trim() : "";
   const jobInst = typeof db.installation_address === "string" ? db.installation_address.trim() : "";
+  const estRaw = db.estimated_installation_hours;
+  const estParsed =
+    estRaw === null || estRaw === undefined
+      ? undefined
+      : typeof estRaw === "number"
+        ? estRaw
+        : Number(estRaw);
+  const estimatedInstallationHours = Number.isFinite(estParsed) ? estParsed : undefined;
 
   return {
     id: db.id as string,
@@ -139,6 +182,7 @@ export const mapDbToJob = (db: Record<string, unknown>): Job => {
     jobBillingAddress: jobBill || undefined,
     jobInstallationAddress: jobInst || undefined,
     customerPhone: typeof db.customer_phone === "string" ? db.customer_phone.trim() || undefined : undefined,
+    estimatedInstallationHours,
     customer: customerData
       ? {
           id: customerData.id as string,
@@ -251,6 +295,7 @@ export function useJobs() {
 
       const { data: authData } = await supabase.auth.getUser();
       const createdBy = authData.user?.id ?? null;
+      const createdByName = await resolveJobCreatorDisplayName(createdBy);
 
       const extendedRow = {
         customer_id: newJob.customerId,
@@ -266,6 +311,7 @@ export function useJobs() {
         customer_phone: newJob.customerPhone,
         prices_include_vat: newJob.pricesIncludeVat,
         created_by: createdBy,
+        ...(createdByName ? { created_by_name: createdByName } : {}),
       };
 
       let ins = await supabase.from("jobs").insert([extendedRow]).select("id").single();
@@ -377,10 +423,17 @@ export function useJobs() {
           authorId: authData.user?.id ?? null,
         });
       }
+      try {
+        await ensureWorkflowWorkOrders(id);
+      } catch (e) {
+        console.warn("ensureWorkflowWorkOrders posle promene statusa posla:", e);
+      }
     },
     onSuccess: (_, variables) => {
       queryClient.invalidateQueries({ queryKey: ["jobs"] });
       queryClient.invalidateQueries({ queryKey: ["job", variables.id] });
+      queryClient.invalidateQueries({ queryKey: ["work-orders"] });
+      queryClient.invalidateQueries({ queryKey: ["work-orders", variables.id] });
       queryClient.invalidateQueries({ queryKey: ["activities"] });
       toast.success("Status posla ažuriran");
     },
@@ -512,6 +565,8 @@ export function useJobDetails(id: string | undefined) {
       return applyPaymentsToJob(job, data);
     },
     enabled: !!id,
+    /** Detail stranica mora odmah da odražava promene (npr. RPC status); globalni staleTime 5min je predug. */
+    staleTime: 0,
   });
 }
 

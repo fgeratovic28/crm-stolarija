@@ -5,14 +5,68 @@ import { toast } from "sonner";
 import { upsertSystemActivity } from "@/lib/activity-automation";
 import { labelDeliveryStatus, labelMaterialType } from "@/lib/activity-labels";
 import { recomputeJobStatus } from "@/lib/job-status-automation";
+import { mapMaterialOrderRow } from "@/lib/map-material-order";
 
-type SupplierLite = { name?: string; contact_person?: string };
 type JobLite = { id: string; job_number: string };
 
 function toNullableDate(value?: string): string | null {
   if (!value) return null;
   const trimmed = value.trim();
   return trimmed.length > 0 ? trimmed : null;
+}
+
+function roundMoney(n: number): number {
+  return Math.round(n * 100) / 100;
+}
+
+function materialOrderNbDbColumns(o: Partial<MaterialOrder>): Record<string, unknown> {
+  const row: Record<string, unknown> = {};
+  if (o.nbLines !== undefined && o.nbLines.length > 0) {
+    row.nb_lines = o.nbLines.map((l) => ({
+      description: (l.description ?? "").trim() || "—",
+      quantity: l.quantity,
+      unit: (l.unit ?? "kom").trim() || "kom",
+      lineNet: roundMoney(Number(l.lineNet) || 0),
+      ...(l.materialType ? { materialType: l.materialType } : {}),
+    }));
+    const first = o.nbLines[0];
+    row.nb_line_description = (first.description ?? "").trim() || null;
+    row.nb_quantity = first.quantity;
+    row.nb_unit = (first.unit ?? "kom").toString().trim() || "kom";
+  } else {
+    if (o.nbLineDescription !== undefined) {
+      row.nb_line_description = o.nbLineDescription?.trim() || null;
+    }
+    if (o.nbQuantity !== undefined && o.nbQuantity !== null && Number.isFinite(o.nbQuantity)) {
+      row.nb_quantity = o.nbQuantity;
+    }
+    if (o.nbUnit !== undefined) {
+      const u = o.nbUnit?.trim();
+      row.nb_unit = u && u.length > 0 ? u : "kom";
+    }
+  }
+  if (o.nbVatRatePercent !== undefined && o.nbVatRatePercent !== null && Number.isFinite(o.nbVatRatePercent)) {
+    row.nb_vat_rate_percent = o.nbVatRatePercent;
+  }
+  if (o.nbBuyerBankAccount !== undefined) {
+    row.nb_buyer_bank_account = o.nbBuyerBankAccount?.trim() || null;
+  }
+  if (o.nbShippingMethod !== undefined) {
+    row.nb_shipping_method = o.nbShippingMethod?.trim() || null;
+  }
+  if (o.nbPaymentDueDate !== undefined) {
+    row.nb_payment_due_date = toNullableDate(o.nbPaymentDueDate);
+  }
+  if (o.nbPaymentNote !== undefined) {
+    row.nb_payment_note = o.nbPaymentNote?.trim() || null;
+  }
+  if (o.nbLegalReference !== undefined) {
+    row.nb_legal_reference = o.nbLegalReference?.trim() || null;
+  }
+  if (o.nbDeliveryAddressOverride !== undefined) {
+    row.nb_delivery_address_override = o.nbDeliveryAddressOverride?.trim() || null;
+  }
+  return row;
 }
 
 function getErrorMessage(error: unknown): string {
@@ -52,7 +106,7 @@ export function useMaterialOrders(jobId?: string) {
         .from("material_orders")
         .select(`
           *,
-          suppliers (id, name, contact_person),
+          suppliers (id, name, contact_person, address),
           jobs (id, job_number)
         `)
         .order("request_date", { ascending: false });
@@ -65,36 +119,9 @@ export function useMaterialOrders(jobId?: string) {
 
       if (error) throw error;
       
-      return data.map(d => {
-        const supplierData = Array.isArray(d.suppliers) ? d.suppliers[0] : d.suppliers;
+      return data.map((d) => {
         const jobData = Array.isArray(d.jobs) ? d.jobs[0] : d.jobs;
-        return {
-          id: d.id,
-          jobId: d.job_id,
-          materialType: d.material_type,
-          supplierId: d.supplier_id,
-          supplier: (supplierData as SupplierLite | null | undefined)?.name || d.supplier,
-          supplierContact: (supplierData as SupplierLite | null | undefined)?.contact_person || d.supplier_contact,
-          orderDate: d.request_date,
-          requestDate: d.request_date,
-          deliveryDate: d.delivery_date,
-          expectedDelivery: d.expected_delivery_date || d.delivery_date,
-          price: d.supplier_price,
-          supplierPrice: d.supplier_price,
-          paid: d.paid,
-          barcode: d.barcode,
-          deliveryStatus: d.delivery_status,
-          deliveryVerified: d.delivered_ok,
-          quantityVerified: d.delivered_ok,
-          allDelivered: d.delivery_status === "delivered",
-          requestFile: d.request_file,
-          quoteFile: d.quote_file,
-          notes: d.notes,
-          job: jobData ? {
-            id: (jobData as JobLite).id,
-            jobNumber: (jobData as JobLite).job_number
-          } : undefined
-        };
+        return mapMaterialOrderRow(d as Record<string, unknown>, jobData as JobLite | null | undefined);
       }) as MaterialOrder[];
     },
   });
@@ -120,6 +147,7 @@ export function useMaterialOrders(jobId?: string) {
           request_file: newOrder.requestFile,
           quote_file: newOrder.quoteFile,
           notes: newOrder.notes,
+          ...materialOrderNbDbColumns(newOrder),
         }])
         .select()
         .single();
@@ -177,6 +205,7 @@ export function useMaterialOrders(jobId?: string) {
           request_file: updatedOrder.requestFile,
           quote_file: updatedOrder.quoteFile,
           notes: updatedOrder.notes,
+          ...materialOrderNbDbColumns(updatedOrder),
         })
         .eq("id", updatedOrder.id);
 

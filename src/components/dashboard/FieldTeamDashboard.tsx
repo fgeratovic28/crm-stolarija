@@ -1,10 +1,6 @@
 import { useState } from "react";
 import { useQueryClient } from "@tanstack/react-query";
-import { 
-  Calendar, MapPin, Phone,
-  Plus,
-  Loader2, Hammer
-} from "lucide-react";
+import { Calendar, MapPin, Phone, Loader2, Hammer } from "lucide-react";
 import { format } from "date-fns";
 import { sr } from "date-fns/locale";
 import { Button } from "@/components/ui/button";
@@ -16,11 +12,14 @@ import { NewFieldReportModal } from "@/components/modals/NewFieldReportModal";
 import { WorkOrderModal } from "@/components/modals/WorkOrderModal";
 import { useToast } from "@/hooks/use-toast";
 import { supabase } from "@/lib/supabase";
-import type { WorkOrder, WorkOrderType } from "@/types";
+import type { WorkOrder } from "@/types";
 import { useRole } from "@/contexts/RoleContext";
-import { fieldReportFlowForWorkOrderType } from "@/lib/field-team-access";
 import { useAuthStore } from "@/stores/auth-store";
 import { labelWorkOrderType } from "@/lib/activity-labels";
+import { MontazaWorkOrderPhotos } from "@/components/shared/MontazaWorkOrderPhotos";
+import { jobPrimaryPhone } from "@/lib/job-contact-phone";
+import { recomputeJobStatus } from "@/lib/job-status-automation";
+import { ensureWorkflowWorkOrders } from "@/lib/work-order-workflow-automation";
 
 export function FieldTeamDashboard() {
   const queryClient = useQueryClient();
@@ -37,14 +36,6 @@ export function FieldTeamDashboard() {
     in_progress: "U toku",
     completed: "Završen",
     canceled: "Otkazan",
-  };
-
-  const getCustomerPhone = (customer: WorkOrder["job"] extends infer T ? T extends { customer?: infer C } ? C : never : never) => {
-    if (!customer) return undefined;
-    if (Array.isArray(customer)) {
-      return customer[0]?.phones?.[0];
-    }
-    return customer.phones?.[0];
   };
 
   const handleOpenDetails = (wo: WorkOrder) => {
@@ -65,7 +56,7 @@ export function FieldTeamDashboard() {
     );
   }
 
-  const handleStatusUpdate = async (workOrderId: string, newStatus: string) => {
+  const handleStatusUpdate = async (workOrderId: string, newStatus: string, jobId: string) => {
     try {
       const { error } = await supabase
         .from("work_orders")
@@ -74,10 +65,27 @@ export function FieldTeamDashboard() {
 
       if (error) throw error;
 
+      try {
+        await recomputeJobStatus(jobId, user?.id ?? null);
+      } catch (recomputeErr) {
+        console.warn("Auto status posla posle promene naloga (teren):", recomputeErr);
+      }
+
+      try {
+        await ensureWorkflowWorkOrders(jobId);
+      } catch (ensureErr) {
+        console.warn("ensureWorkflowWorkOrders posle promene naloga (teren):", ensureErr);
+      }
+
       await queryClient.invalidateQueries({
         queryKey: ["field-team-work-orders", user?.teamId, user?.role],
       });
       await queryClient.invalidateQueries({ queryKey: ["field-team-map-markers"] });
+      await queryClient.invalidateQueries({ queryKey: ["jobs"] });
+      await queryClient.invalidateQueries({ queryKey: ["job", jobId] });
+      await queryClient.invalidateQueries({ queryKey: ["work-orders", jobId] });
+      await queryClient.invalidateQueries({ queryKey: ["work-orders"] });
+      await queryClient.invalidateQueries({ queryKey: ["activities"] });
 
       toast({
         title: "Status ažuriran",
@@ -160,8 +168,17 @@ export function FieldTeamDashboard() {
                   </div>
                   <div className="flex items-start gap-2 text-sm">
                     <Phone className="mt-0.5 h-4 w-4 text-muted-foreground shrink-0" />
-                    <a href={`tel:${getCustomerPhone(wo.job?.customer) ?? ""}`} className="text-primary hover:underline">
-                      {getCustomerPhone(wo.job?.customer) || "Nema telefona"}
+                    <a
+                      href={`tel:${jobPrimaryPhone({
+                        customerPhone: wo.job?.customerPhone,
+                        customer: wo.job?.customer,
+                      })}`}
+                      className="text-primary hover:underline"
+                    >
+                      {jobPrimaryPhone({
+                        customerPhone: wo.job?.customerPhone,
+                        customer: wo.job?.customer,
+                      }) || "Nema telefona"}
                     </a>
                   </div>
                 </div>
@@ -171,22 +188,28 @@ export function FieldTeamDashboard() {
                   <p className="text-sm line-clamp-2">{wo.description || "Nema opisa"}</p>
                 </div>
 
-                <div className="grid grid-cols-2 gap-2 pt-2">
-                  {wo.status !== 'completed' && (
-                    <Button 
-                      variant="outline" 
-                      size="sm" 
+                {wo.type === "installation" && canPerformAction("add_mounting_report") && (
+                  <MontazaWorkOrderPhotos workOrderId={wo.id} />
+                )}
+
+                {wo.status !== "completed" && wo.status !== "canceled" && (
+                  <div className="pt-2">
+                    <Button
+                      variant="outline"
+                      size="sm"
                       className="w-full"
                       disabled={wo.status === "pending" && !!activeWorkOrder && activeWorkOrder.id !== wo.id}
                       title={
                         wo.status === "pending" && !!activeWorkOrder && activeWorkOrder.id !== wo.id
-                          ? "Završite aktivni nalog pre pokretanja sledećeg."
-                          : undefined
+                          ? "Završite aktivni nalog (sačuvajte izveštaj) pre pokretanja sledećeg."
+                          : wo.status === "in_progress"
+                            ? "Otvara formu izveštaja; posle čuvanja nalog je završen."
+                            : undefined
                       }
                       onClick={(e) => {
                         e.stopPropagation();
                         if (wo.status === "pending") {
-                          handleStatusUpdate(wo.id, "in_progress");
+                          void handleStatusUpdate(wo.id, "in_progress", wo.jobId);
                           return;
                         }
                         if (wo.status === "in_progress") {
@@ -195,32 +218,10 @@ export function FieldTeamDashboard() {
                         }
                       }}
                     >
-                      {wo.status === 'pending' ? 'Započni' : 'Završi'}
+                      {wo.status === "pending" ? "Započni" : "Završi"}
                     </Button>
-                  )}
-                  {(() => {
-                    const flow = fieldReportFlowForWorkOrderType(wo.type as WorkOrderType);
-                    const canReport =
-                      (flow === "mounting" && canPerformAction("add_mounting_report")) ||
-                      (flow === "field" && canPerformAction("add_field_report"));
-                    if (!canReport) return null;
-                    return (
-                      <Button 
-                        variant="default" 
-                        size="sm" 
-                        className="w-full"
-                        onClick={(e) => {
-                          e.stopPropagation();
-                          setSelectedWorkOrder(wo.id);
-                          setReportModalOpen(true);
-                        }}
-                      >
-                        <Plus className="mr-1.5 h-3.5 w-3.5" />
-                        Izveštaj
-                      </Button>
-                    );
-                  })()}
-                </div>
+                  </div>
+                )}
               </CardContent>
             </Card>
           ))}
@@ -236,9 +237,12 @@ export function FieldTeamDashboard() {
       <FieldTeamWorkOrdersMap workOrders={workOrders ?? []} onOpenWorkOrder={handleOpenDetails} />
 
       {selectedWorkOrder && (
-        <NewFieldReportModal 
-          open={reportModalOpen} 
-          onOpenChange={setReportModalOpen}
+        <NewFieldReportModal
+          open={reportModalOpen}
+          onOpenChange={(open) => {
+            setReportModalOpen(open);
+            if (!open) setSelectedWorkOrder(null);
+          }}
           workOrderId={selectedWorkOrder}
         />
       )}

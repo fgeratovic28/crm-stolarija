@@ -1,5 +1,6 @@
 import { supabase } from "@/lib/supabase";
 import { Job, Customer, Activity, Payment, MaterialOrder, WorkOrder, FieldReport, AppFile, AppUser } from "@/types";
+import { mapDbToFile } from "@/hooks/use-files";
 
 // Generic fetcher
 export async function getEntities<T>(tableName: string) {
@@ -75,6 +76,8 @@ export const filesApi = {
   getByJobId: async (jobId: string) => {
     const { data, error } = await supabase.from("files").select("*").eq("job_id", jobId);
     if (error) throw error;
-    return data as AppFile[];
+    return (data ?? []).map((row) =>
+      mapDbToFile(row as Parameters<typeof mapDbToFile>[0]),
+    ) as AppFile[];
   },
 };

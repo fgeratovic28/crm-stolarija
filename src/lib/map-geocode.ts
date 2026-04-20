@@ -59,17 +59,78 @@ export function normalizeAddressForGeocoding(address?: string): string {
   return (address ?? "").trim().replace(/\s+/g, " ");
 }
 
-export async function geocodeAddress(address: string): Promise<{ lat: number; lng: number } | null> {
-  const query = encodeURIComponent(`${address}, Serbia`);
-  const res = await fetch(`https://nominatim.openstreetmap.org/search?format=json&limit=1&q=${query}`);
-  if (!res.ok) return null;
-  const rows = (await res.json()) as Array<{ lat?: string; lon?: string }>;
+function extractCoordinates(rows: Array<{ lat?: string; lon?: string }>): { lat: number; lng: number } | null {
   const first = rows[0];
   const lat = Number(first?.lat);
   const lng = Number(first?.lon);
   if (!Number.isFinite(lat) || !Number.isFinite(lng)) return null;
   if (lat < -90 || lat > 90 || lng < -180 || lng > 180) return null;
   return { lat, lng };
+}
+
+function buildGeocodeCandidates(address: string): string[] {
+  const normalized = normalizeAddressForGeocoding(address);
+  if (!normalized) return [];
+
+  const lowered = normalized.toLowerCase();
+  const hasCountry =
+    lowered.includes("serbia") ||
+    lowered.includes("srbija") ||
+    lowered.includes("republika srbija");
+
+  const noParen = normalized.replace(/\([^)]*\)/g, " ").replace(/\s+/g, " ").trim();
+  const noFloorOrApartment = noParen
+    .replace(/\b(stan|sprat|ulaz)\b[^,]*/gi, " ")
+    .replace(/\s+/g, " ")
+    .trim();
+
+  const variants = [
+    normalized,
+    noParen,
+    noFloorOrApartment,
+    hasCountry ? "" : `${normalized}, Srbija`,
+    hasCountry ? "" : `${normalized}, Serbia`,
+  ];
+
+  const unique = new Set<string>();
+  for (const value of variants) {
+    const cleaned = normalizeAddressForGeocoding(value);
+    if (cleaned) unique.add(cleaned);
+  }
+
+  return [...unique];
+}
+
+export async function geocodeAddress(address: string): Promise<{ lat: number; lng: number } | null> {
+  const candidates = buildGeocodeCandidates(address);
+  for (const candidate of candidates) {
+    const params = new URLSearchParams({
+      format: "jsonv2",
+      limit: "1",
+      addressdetails: "0",
+      countrycodes: "rs",
+      "accept-language": "sr,en",
+      q: candidate,
+    });
+
+    let res: Response;
+    try {
+      res = await fetch(`https://nominatim.openstreetmap.org/search?${params.toString()}`, {
+        headers: {
+          Accept: "application/json",
+        },
+      });
+    } catch {
+      continue;
+    }
+    if (!res.ok) continue;
+
+    const rows = (await res.json()) as Array<{ lat?: string; lon?: string }>;
+    const extracted = extractCoordinates(rows);
+    if (extracted) return extracted;
+  }
+
+  return null;
 }
 
 export function tryStoredCoordinates(lat?: unknown, lng?: unknown): { lat: number; lng: number } | null {

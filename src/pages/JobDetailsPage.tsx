@@ -24,12 +24,14 @@ import { MaterialOrdersTab } from "@/components/job-tabs/MaterialOrdersTab";
 import { WorkOrdersTab } from "@/components/job-tabs/WorkOrdersTab";
 import { FieldReportsTab } from "@/components/job-tabs/FieldReportsTab";
 import { FilesTab } from "@/components/job-tabs/FilesTab";
+import { AddressMiniMap } from "@/components/shared/AddressMiniMap";
 import { AddActivityModal } from "@/components/modals/AddActivityModal";
 import { NewJobModal } from "@/components/modals/NewJobModal";
 import { JOB_STATUS_CONFIG, type JobStatus } from "@/types";
-import { formatCurrencyBySettings } from "@/lib/app-settings";
-import { labelMaterialType } from "@/lib/activity-labels";
+import { formatCurrencyBySettings, formatDateByAppLanguage } from "@/lib/app-settings";
+import { labelMaterialType, labelWorkOrderType } from "@/lib/activity-labels";
 import { getInstallationAddressForDisplay } from "@/lib/map-geocode";
+import { getJobInstallationScheduleDisplay } from "@/lib/job-installation-schedule";
 
 export default function JobDetailsPage() {
   const { id } = useParams();
@@ -80,8 +82,14 @@ export default function JobDetailsPage() {
   const totalPaid = jobPayments.reduce((sum, payment) => sum + (Number(payment.amount) || 0), 0);
   const paidPercent = job.totalPrice > 0 ? Math.round((totalPaid / job.totalPrice) * 100) : 0;
 
+  const hasInstallationPlan = jobWorkOrders.some(
+    (w) => w.type === "installation" && w.status !== "canceled",
+  );
+
   const missingFields: string[] = [];
-  if (!job.scheduledDate) missingFields.push("Datum ugradnje nije zakazan");
+  if (!job.scheduledDate && !hasInstallationPlan) {
+    missingFields.push("Datum ugradnje nije zakazan");
+  }
   if (job.unpaidBalance > 0 && jobPayments.length === 0) missingFields.push("Nema evidentiranih uplata");
 
   const copyJobNumber = () => {
@@ -90,6 +98,9 @@ export default function JobDetailsPage() {
   };
 
   const installationAddressDisplay = getInstallationAddressForDisplay(job);
+  const installationScheduleDisplay = getJobInstallationScheduleDisplay(job, jobWorkOrders);
+  const scheduleKpiValue = installationScheduleDisplay ?? "—";
+  const createdAtDisplay = formatDateByAppLanguage(job.createdAt) || job.createdAt;
 
   return (
     <AppLayout>
@@ -112,12 +123,17 @@ export default function JobDetailsPage() {
                   <h1 className="text-lg sm:text-xl font-bold text-foreground">{job.jobNumber}</h1>
                   <button onClick={copyJobNumber} className="text-muted-foreground hover:text-foreground"><Copy className="w-3.5 h-3.5" /></button>
                   <Select onValueChange={handleStatusChange} value={job.status}>
-                    <SelectTrigger className="h-7 w-fit bg-transparent border-none p-0 focus:ring-0">
+                    <SelectTrigger
+                      className="h-7 w-fit bg-transparent border-none p-0 focus:ring-0"
+                      title={JOB_STATUS_CONFIG[job.status].automationHint}
+                    >
                       <StatusBadge status={job.status} />
                     </SelectTrigger>
                     <SelectContent>
                       {Object.entries(JOB_STATUS_CONFIG).map(([key, config]) => (
-                        <SelectItem key={key} value={key}>{config.label}</SelectItem>
+                        <SelectItem key={key} value={key} title={config.automationHint}>
+                          {config.label}
+                        </SelectItem>
                       ))}
                     </SelectContent>
                   </Select>
@@ -155,8 +171,12 @@ export default function JobDetailsPage() {
                   <span className="flex items-center gap-1">
                     <User className="w-3 h-3" /> Kreirao: {job.createdBy?.name ?? "—"}
                   </span>
-                  <span className="flex items-center gap-1"><Calendar className="w-3 h-3" /> Kreiran: {job.createdAt}</span>
-                  {job.scheduledDate && <span className="flex items-center gap-1"><Calendar className="w-3 h-3" /> Zakazan: {job.scheduledDate}</span>}
+                  <span className="flex items-center gap-1"><Calendar className="w-3 h-3" /> Kreiran: {createdAtDisplay}</span>
+                  {installationScheduleDisplay && (
+                    <span className="flex items-center gap-1">
+                      <Calendar className="w-3 h-3" /> Zakazan: {installationScheduleDisplay}
+                    </span>
+                  )}
                   <span className="flex items-center gap-1"><MapPin className="w-3 h-3" /> {installationAddressDisplay}</span>
                 </div>
               </div>
@@ -182,7 +202,7 @@ export default function JobDetailsPage() {
               { icon: DollarSign, value: formatCurrency(job.unpaidBalance), label: "Preostalo", color: job.unpaidBalance > 0 ? "text-destructive" : "text-success" },
               { icon: Package, value: String(pendingMaterials.length), label: "Čeka materijal", color: pendingMaterials.length > 0 ? "text-warning" : "text-foreground" },
               { icon: ClipboardList, value: String(activeWorkOrders.length), label: "Aktivni nalozi", color: "text-info" },
-              { icon: Calendar, value: job.scheduledDate || "—", label: "Zakazano", color: "text-foreground" },
+              { icon: Calendar, value: scheduleKpiValue, label: "Zakazano", color: "text-foreground" },
             ].map((kpi, i) => (
               <div key={i} className="bg-card rounded-lg border border-border p-3 text-center">
                 <kpi.icon className={`w-4 h-4 mx-auto mb-1 ${kpi.color}`} />
@@ -198,7 +218,7 @@ export default function JobDetailsPage() {
             {[
               { icon: Package, value: String(pendingMaterials.length), label: "Čeka materijal", color: pendingMaterials.length > 0 ? "text-warning" : "text-foreground" },
               { icon: ClipboardList, value: String(activeWorkOrders.length), label: "Aktivni nalozi", color: "text-info" },
-              { icon: Calendar, value: job.scheduledDate || "—", label: "Zakazano", color: "text-foreground" },
+              { icon: Calendar, value: scheduleKpiValue, label: "Zakazano", color: "text-foreground" },
               { icon: MapPin, value: installationAddressDisplay, label: "Lokacija", color: "text-foreground" },
             ].map((kpi, i) => (
               <div key={i} className="bg-card rounded-lg border border-border p-3 text-center">
@@ -222,7 +242,11 @@ export default function JobDetailsPage() {
               {hasAccess("material-orders") && <TabsTrigger value="materials" className="text-xs sm:text-sm">Materijal <span className="hidden sm:inline ml-1">({jobMaterials.length})</span></TabsTrigger>}
               {hasAccess("work-orders") && <TabsTrigger value="work-orders" className="text-xs sm:text-sm">Nalozi <span className="hidden sm:inline ml-1">({jobWorkOrders.length})</span></TabsTrigger>}
               {hasAccess("field-reports") && <TabsTrigger value="field-reports" className="text-xs sm:text-sm">Teren <span className="hidden sm:inline ml-1">({jobFieldReports.length})</span></TabsTrigger>}
-              {hasAccess("files") && <TabsTrigger value="files" className="text-xs sm:text-sm">Fajlovi <span className="hidden sm:inline ml-1">({jobFiles.length})</span></TabsTrigger>}
+              {hasAccess("files") && (
+                <TabsTrigger value="files" className="text-xs sm:text-sm">
+                  Fajlovi <span className="hidden sm:inline ml-1">({jobFiles.length})</span>
+                </TabsTrigger>
+              )}
             </TabsList>
           </div>
 
@@ -280,6 +304,7 @@ export default function JobDetailsPage() {
                       <h4 className="font-semibold text-foreground text-sm">Adresa ugradnje</h4>
                     </div>
                     <p className="text-sm text-muted-foreground">{installationAddressDisplay}</p>
+                    <AddressMiniMap address={installationAddressDisplay} />
                   </div>
                 </div>
 
@@ -344,12 +369,20 @@ export default function JobDetailsPage() {
                     <SectionHeader title="Aktivni radni nalozi" subtitle={`${activeWorkOrders.length} naloga`} icon={ClipboardList} />
                     <div className="space-y-2.5">
                       {activeWorkOrders.map(w => (
-                        <div key={w.id} className="flex items-center justify-between text-sm bg-muted/50 rounded-lg p-2.5">
-                          <div className="flex items-center gap-2">
-                            <GenericBadge label={w.status === "in_progress" ? "U toku" : "Čeka"} variant={w.status === "in_progress" ? "info" : "warning"} />
-                            <span className="truncate">{w.description.slice(0, 45)}{w.description.length > 45 ? "…" : ""}</span>
+                        <div key={w.id} className="flex items-center justify-between gap-2 text-sm bg-muted/50 rounded-lg p-2.5">
+                          <div className="flex flex-col min-w-0 gap-0.5">
+                            <div className="flex items-center gap-2">
+                              <GenericBadge label={w.status === "in_progress" ? "U toku" : "Čeka"} variant={w.status === "in_progress" ? "info" : "warning"} />
+                              <span className="font-medium text-foreground">{labelWorkOrderType(w.type)}</span>
+                            </div>
+                            <span className="truncate text-muted-foreground">{w.description.slice(0, 52)}{w.description.length > 52 ? "…" : ""}</span>
                           </div>
-                          <span className="text-xs text-muted-foreground whitespace-nowrap">{w.assignedTeamId}</span>
+                          <div className="text-xs text-muted-foreground text-right shrink-0 space-y-0.5">
+                            <p className="whitespace-nowrap">{formatDateByAppLanguage(w.date) || w.date}</p>
+                            <p className="whitespace-nowrap max-w-[10rem] truncate" title={w.assignedTeamName || w.assignedTeamId}>
+                              {w.assignedTeamName || w.assignedTeamId || "—"}
+                            </p>
+                          </div>
                         </div>
                       ))}
                     </div>

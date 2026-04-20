@@ -1,12 +1,13 @@
-import { useForm, useFieldArray } from "react-hook-form";
+import { useForm, useFieldArray, useWatch } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
 import { z } from "zod";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Form, FormControl, FormField, FormItem, FormLabel, FormMessage } from "@/components/ui/form";
-import { Plus, Trash2, MapPin } from "lucide-react";
+import { Plus, Trash2 } from "lucide-react";
 import { toast } from "sonner";
 import type { Customer } from "@/types";
+import { AddressMiniMap } from "@/components/shared/AddressMiniMap";
 
 const customerSchema = z
   .object({
@@ -83,6 +84,9 @@ export function CustomerForm({ initialData, onSubmit, onCancel, isLoading }: Cus
     control: form.control,
     name: "emails",
   });
+
+  const billingAddressWatch = useWatch({ control: form.control, name: "billingAddress" });
+  const installationAddressWatch = useWatch({ control: form.control, name: "installationAddress" });
 
   return (
     <Form {...form}>
@@ -166,21 +170,17 @@ export function CustomerForm({ initialData, onSubmit, onCancel, isLoading }: Cus
         <div className="space-y-4">
           <FormField control={form.control} name="billingAddress" render={({ field }) => (
             <FormItem>
-              <FormLabel className="flex items-center gap-2">
-                Adresa za fakturisanje
-                <span className="text-[10px] text-muted-foreground flex items-center gap-1"><MapPin className="w-3 h-3" /> Map placeholder</span>
-              </FormLabel>
+              <FormLabel>Adresa za fakturisanje</FormLabel>
               <FormControl><Input placeholder="Ulica, Broj, Grad" {...field} /></FormControl>
+              <AddressMiniMap address={billingAddressWatch ?? ""} />
               <FormMessage />
             </FormItem>
           )} />
           <FormField control={form.control} name="installationAddress" render={({ field }) => (
             <FormItem>
-              <FormLabel className="flex items-center gap-2">
-                Adresa ugradnje
-                <span className="text-[10px] text-muted-foreground flex items-center gap-1"><MapPin className="w-3 h-3" /> Map placeholder</span>
-              </FormLabel>
+              <FormLabel>Adresa ugradnje</FormLabel>
               <FormControl><Input placeholder="Ulica, Broj, Grad" {...field} /></FormControl>
+              <AddressMiniMap address={installationAddressWatch ?? ""} />
               <FormMessage />
             </FormItem>
           )} />

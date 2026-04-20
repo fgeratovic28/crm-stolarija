@@ -1,0 +1,24 @@
+# Never upload local installs (electron binary alone exceeds Vercel's per-file limit)
+node_modules
+
+# Electron / desktop build output (hundreds of MB)
+release
+
+# Vite output — Vercel runs `vite build` on the server
+dist
+dist-ssr
+dev-dist
+
+# Local / editor
+.git
+.cursor
+.vercel
+*.local
+.env
+.env.local
+.env.development.local
+.env.production.local
+
+# Supabase CLI caches (not needed for the web build)
+supabase/.temp
+supabase/.branches

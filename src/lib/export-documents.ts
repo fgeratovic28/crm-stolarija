@@ -1,23 +1,58 @@
 import { supabase } from "@/lib/supabase";
 import { fetchJobByIdForExport } from "@/hooks/use-jobs";
 import { formatDateBySettings, formatDateTimeBySettings } from "@/lib/app-settings";
-import type { FieldReport, WorkOrder } from "@/types";
+import {
+  buildMaterialOrderPdfDisplayName,
+  upsertMaterialOrderGeneratedPdf,
+  type MaterialOrderPdfUpsertResult,
+} from "@/lib/material-order-pdf-upload";
+import { buildNarudzbenicaDocumentHtml } from "@/lib/narudzbenica-html";
+import { PDF_DOCUMENT_STYLES } from "@/lib/pdf-document-theme";
+import { mapMaterialOrderRow } from "@/lib/map-material-order";
+import type { FieldReport, FieldReportDetails, MaterialOrder, WorkOrder } from "@/types";
+import { jobPrimaryPhone } from "@/lib/job-contact-phone";
+import { labelWorkOrderType } from "@/lib/activity-labels";
 
 const today = () => formatDateBySettings(new Date());
 
-const typeLabels: Record<string, string> = {
-  measurement: "Merenje",
-  measurement_verification: "Provera mera",
-  installation: "Ugradnja",
-  complaint: "Reklamacija",
-  service: "Servis",
-  production: "Proizvodni nalog",
-  site_visit: "Terenska poseta",
-  control_visit: "Kontrolna poseta",
-};
+function escapeHtml(s: string): string {
+  return s
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;")
+    .replace(/"/g, "&quot;");
+}
+
+function safeImageSrc(url: string): string | null {
+  const u = url.trim();
+  if (/^https?:\/\//i.test(u) || u.startsWith("data:")) return u;
+  return null;
+}
+
+type JobLite = { id: string; job_number: string };
+
+async function fetchMaterialOrderForExport(orderId: string): Promise<MaterialOrder | null> {
+  const { data, error } = await supabase
+    .from("material_orders")
+    .select(`
+      *,
+      suppliers (id, name, contact_person, address),
+      jobs (id, job_number)
+    `)
+    .eq("id", orderId)
+    .maybeSingle();
+
+  if (error || !data) return null;
+
+  const jobData = Array.isArray(data.jobs) ? data.jobs[0] : data.jobs;
+  return mapMaterialOrderRow(data as Record<string, unknown>, jobData as JobLite | null | undefined);
+}
 
 const statusLabels: Record<string, string> = {
-  completed: "Završen", in_progress: "U toku", pending: "Na čekanju", canceled: "Otkazan",
+  completed: "Završen",
+  in_progress: "U toku",
+  pending: "Na čekanju",
+  canceled: "Otkazan",
 };
 
 async function fetchFieldReportForExport(reportId: string): Promise<FieldReport | null> {
@@ -45,6 +80,15 @@ async function fetchFieldReportForExport(reportId: string): Promise<FieldReport 
   const jobRaw = workOrderRaw?.jobs ? (Array.isArray(workOrderRaw.jobs) ? workOrderRaw.jobs[0] : workOrderRaw.jobs) : undefined;
   const customerRaw = jobRaw?.customers ? (Array.isArray(jobRaw.customers) ? jobRaw.customers[0] : jobRaw.customers) : undefined;
 
+  const rawDetails = (data as { details?: unknown }).details;
+  const detailsParsed =
+    rawDetails && typeof rawDetails === "object" && !Array.isArray(rawDetails)
+      ? (rawDetails as FieldReportDetails)
+      : undefined;
+  const estH = (data as { estimated_installation_hours?: unknown }).estimated_installation_hours;
+  const estNum =
+    estH === null || estH === undefined ? undefined : typeof estH === "number" ? estH : Number(estH);
+
   return {
     id: data.id,
     jobId: data.job_id ?? workOrderRaw?.job_id ?? "",
@@ -56,6 +100,8 @@ async function fetchFieldReportForExport(reportId: string): Promise<FieldReport 
     jobCompleted: !!data.completed,
     everythingOk: data.everything_ok ?? !data.issues,
     issueDescription: data.issues ?? undefined,
+    details: detailsParsed,
+    estimatedInstallationHours: Number.isFinite(estNum as number) ? (estNum as number) : undefined,
     handoverDate: data.handover_date ?? undefined,
     images: Array.isArray(data.images) ? data.images : [],
     missingItems: Array.isArray(data.missing_items) ? data.missing_items : [],
@@ -108,108 +154,146 @@ function openPrintWindow(html: string) {
   }
 }
 
-const baseStyle = `
-  @page { size: A4; margin: 15mm; }
-  body { font-family: Arial, sans-serif; color: #1a1a1a; margin: 0; padding: 20px; font-size: 13px; line-height: 1.5; }
-  .header { display: flex; justify-content: space-between; align-items: flex-start; margin-bottom: 20px; border-bottom: 2px solid #1a1a1a; padding-bottom: 12px; }
-  .header h1 { font-size: 18px; margin: 0 0 4px 0; }
-  .header .meta { font-size: 11px; color: #666; }
-  .section { margin-bottom: 16px; }
-  .section-title { font-size: 11px; font-weight: 600; color: #666; text-transform: uppercase; letter-spacing: 0.5px; margin-bottom: 6px; border-bottom: 1px solid #e5e7eb; padding-bottom: 4px; }
-  .grid { display: grid; grid-template-columns: 1fr 1fr; gap: 8px 24px; }
-  .field-label { font-size: 10px; color: #888; text-transform: uppercase; letter-spacing: 0.3px; }
-  .field-value { font-size: 13px; margin-bottom: 8px; }
-  .badge { display: inline-block; padding: 2px 10px; border-radius: 12px; font-size: 11px; font-weight: 600; margin-right: 6px; }
-  .badge-ok { background: #dcfce7; color: #166534; }
-  .badge-warn { background: #fef9c3; color: #854d0e; }
-  .badge-bad { background: #fee2e2; color: #991b1b; }
-  .alert { background: #fef2f2; border: 1px solid #fecaca; border-radius: 6px; padding: 10px; margin-bottom: 12px; }
-  .alert-title { font-weight: 600; color: #991b1b; margin-bottom: 4px; font-size: 12px; }
-  .tag { display: inline-block; background: #fee2e2; color: #991b1b; padding: 2px 8px; border-radius: 10px; font-size: 11px; font-weight: 500; margin: 2px 4px 2px 0; }
-  .note-box { background: #f8f9fa; border: 1px solid #e5e7eb; border-radius: 6px; padding: 10px; font-size: 13px; }
-  .footer { margin-top: 24px; font-size: 10px; color: #999; text-align: center; border-top: 1px solid #e5e7eb; padding-top: 8px; }
-  table { width: 100%; border-collapse: collapse; }
-  th, td { text-align: left; padding: 6px 10px; font-size: 12px; border-bottom: 1px solid #e5e7eb; }
-  th { font-weight: 600; color: #666; font-size: 10px; text-transform: uppercase; }
-`;
+const docStyles = PDF_DOCUMENT_STYLES;
 
 export async function exportFieldReportPDF(report: FieldReport) {
   const reportFromDb = await fetchFieldReportForExport(report.id);
   const reportData = reportFromDb ?? report;
   const job = (await fetchJobByIdForExport(reportData.jobId)) ?? null;
 
+  const arrivalLine = reportData.arrivalDate ? formatDateTimeBySettings(reportData.arrivalDate) : "—";
+  const det = reportData.details;
+  const actionTimeRows: string[] = [];
+  if (det?.arrivedAt) {
+    actionTimeRows.push(
+      `<div><div class="field-label">Stigao na teren (zabeleženo)</div><div class="field-value">${escapeHtml(formatDateTimeBySettings(det.arrivedAt))}</div></div>`,
+    );
+  }
+  if (det?.canceledAt) {
+    actionTimeRows.push(
+      `<div><div class="field-label">Otkazivanje (zabeleženo)</div><div class="field-value">${escapeHtml(formatDateTimeBySettings(det.canceledAt))}</div></div>`,
+    );
+  }
+  if (det?.finishedAt) {
+    actionTimeRows.push(
+      `<div><div class="field-label">Gotov (zabeleženo)</div><div class="field-value">${escapeHtml(formatDateTimeBySettings(det.finishedAt))}</div></div>`,
+    );
+  }
+  if (det?.issueReportedAt) {
+    actionTimeRows.push(
+      `<div><div class="field-label">Prijava problema (zabeleženo)</div><div class="field-value">${escapeHtml(formatDateTimeBySettings(det.issueReportedAt))}</div></div>`,
+    );
+  }
+  if (det?.additionalReqAt) {
+    actionTimeRows.push(
+      `<div><div class="field-label">Dodatni zahtev (zabeleženo)</div><div class="field-value">${escapeHtml(formatDateTimeBySettings(det.additionalReqAt))}</div></div>`,
+    );
+  }
+  const jobSubtitle = job
+    ? `${escapeHtml(job.jobNumber)} · ${escapeHtml(job.customer.fullName)}`
+    : reportData.job
+      ? `${escapeHtml(reportData.job.jobNumber)} · ${escapeHtml(reportData.job.customer.fullName)}`
+      : "";
+
   const html = `<!DOCTYPE html><html><head><meta charset="utf-8"><title>Terenski izveštaj</title>
-<style>${baseStyle}</style></head><body>
-<div class="header">
-  <div>
-    <h1>Terenski izveštaj</h1>
-    <div class="meta">${reportData.address}</div>
-    ${job ? `<div class="meta">Posao: ${job.jobNumber} — ${job.customer.fullName}</div>` : reportData.job ? `<div class="meta">Posao: ${reportData.job.jobNumber} — ${reportData.job.customer.fullName}</div>` : ""}
+<style>${docStyles}</style></head><body>
+<div class="doc-wrap">
+  <div class="doc-accent"></div>
+  <div class="doc-header">
+    <div class="doc-brand">
+      <div class="doc-brand-line">Stolarija Kovačević · Interni dokument</div>
+      <h1 class="doc-title">Terenski izveštaj</h1>
+      <p class="doc-lead">${escapeHtml(reportData.address)}</p>
+      ${jobSubtitle ? `<p class="doc-lead" style="margin-top:6px">${jobSubtitle}</p>` : ""}
+    </div>
+    <div class="doc-meta-right">
+      <div><strong>Datum / vreme</strong><br/>${arrivalLine}</div>
+      <div style="margin-top:10px"><strong>Štampano</strong><br/>${today()}</div>
+    </div>
   </div>
-  <div style="text-align:right">
-    <div class="meta">Datum: ${reportData.arrivalDate ? formatDateBySettings(reportData.arrivalDate) : "N/A"}</div>
-    <div class="meta">Generisano: ${today()}</div>
+
+  <div class="section">
+    <div class="section-title">Status</div>
+    <div class="badge-row">
+      <span class="badge ${reportData.arrived ? "badge-ok" : "badge-warn"}">${reportData.arrived ? "Stigao na teren" : "Nije stigao"}</span>
+      <span class="badge ${reportData.jobCompleted ? "badge-ok" : "badge-warn"}">${reportData.jobCompleted ? "Posao završen" : "Nezavršen"}</span>
+      <span class="badge ${reportData.everythingOk ? "badge-ok" : "badge-bad"}">${reportData.everythingOk ? "Sve u redu" : "Ima problema"}</span>
+      ${reportData.siteCanceled ? '<span class="badge badge-bad">Teren otkazan</span>' : ""}
+    </div>
   </div>
-</div>
 
-<div class="section">
-  <div class="section-title">Status</div>
-  <div>
-    <span class="badge ${reportData.arrived ? "badge-ok" : "badge-warn"}">${reportData.arrived ? "Stigao na teren" : "Nije stigao"}</span>
-    <span class="badge ${reportData.jobCompleted ? "badge-ok" : "badge-warn"}">${reportData.jobCompleted ? "Posao završen" : "Nezavršen"}</span>
-    <span class="badge ${reportData.everythingOk ? "badge-ok" : "badge-bad"}">${reportData.everythingOk ? "Sve u redu" : "Ima problema"}</span>
-    ${reportData.siteCanceled ? '<span class="badge badge-bad">Teren otkazan</span>' : ""}
+  ${reportData.siteCanceled && reportData.cancelReason ? `
+  <div class="alert">
+    <div class="alert-title">Razlog otkazivanja</div>
+    <div>${escapeHtml(reportData.cancelReason)}</div>
+  </div>` : ""}
+
+  ${reportData.issueDescription ? `
+  <div class="alert">
+    <div class="alert-title">Pronađeni problemi</div>
+    <div>${escapeHtml(reportData.issueDescription)}</div>
+  </div>` : ""}
+
+  <div class="section">
+    <div class="section-title">Vremena</div>
+    <div class="card"><div class="grid">
+      ${reportData.arrivalDate ? `<div><div class="field-label">Dolazak</div><div class="field-value">${escapeHtml(formatDateTimeBySettings(reportData.arrivalDate))}</div></div>` : ""}
+      ${reportData.handoverDate ? `<div><div class="field-label">Primopredaja</div><div class="field-value">${escapeHtml(formatDateBySettings(reportData.handoverDate))}</div></div>` : ""}
+      ${actionTimeRows.join("")}
+    </div></div>
   </div>
+
+  ${
+    reportData.workOrderType === "measurement" &&
+    reportData.estimatedInstallationHours != null &&
+    Number.isFinite(reportData.estimatedInstallationHours)
+      ? `
+  <div class="section">
+    <div class="section-title">Procena ugradnje</div>
+    <div class="note-box">${escapeHtml(String(reportData.estimatedInstallationHours))} h</div>
+  </div>`
+      : ""
+  }
+
+  ${reportData.measurements ? `
+  <div class="section">
+    <div class="section-title">Mere</div>
+    <div class="note-box">${escapeHtml(reportData.measurements)}</div>
+  </div>` : ""}
+
+  ${reportData.missingItems.length > 0 ? `
+  <div class="section">
+    <div class="section-title">Nedostajući delovi</div>
+    <div>${reportData.missingItems.map((i) => `<span class="tag">${escapeHtml(i)}</span>`).join("")}</div>
+  </div>` : ""}
+
+  ${reportData.additionalNeeds.length > 0 ? `
+  <div class="section">
+    <div class="section-title">Dodatne potrebe</div>
+    <ul style="margin:0;padding-left:18px">${reportData.additionalNeeds.map((n) => `<li>${escapeHtml(n)}</li>`).join("")}</ul>
+  </div>` : ""}
+
+  ${reportData.generalNotes ? `
+  <div class="section">
+    <div class="section-title">Napomene</div>
+    <div class="note-box">${escapeHtml(reportData.generalNotes)}</div>
+  </div>` : ""}
+
+  ${reportData.images.length > 0 ? `
+  <div class="section">
+    <div class="section-title">Fotografije (${reportData.images.length})</div>
+    <div class="photo-grid">${reportData.images
+      .map((img, i) => {
+        const src = safeImageSrc(img);
+        return src
+          ? `<img src="${src.replace(/"/g, "&quot;")}" alt="Fotografija ${i + 1}" />`
+          : "";
+      })
+      .join("")}</div>
+  </div>` : ""}
+
+  <div class="footer">Stolarija Kovačević d.o.o. · Terenski izveštaj · ${today()}</div>
 </div>
-
-${reportData.siteCanceled && reportData.cancelReason ? `
-<div class="alert">
-  <div class="alert-title">Razlog otkazivanja</div>
-  <div>${reportData.cancelReason}</div>
-</div>` : ""}
-
-${reportData.issueDescription ? `
-<div class="alert">
-  <div class="alert-title">Pronađeni problemi</div>
-  <div>${reportData.issueDescription}</div>
-</div>` : ""}
-
-<div class="grid">
-  ${reportData.arrivalDate ? `<div><div class="field-label">Datum dolaska</div><div class="field-value">${formatDateTimeBySettings(reportData.arrivalDate)}</div></div>` : ""}
-  ${reportData.handoverDate ? `<div><div class="field-label">Primopredaja</div><div class="field-value">${formatDateBySettings(reportData.handoverDate)}</div></div>` : ""}
-</div>
-
-${reportData.measurements ? `
-<div class="section">
-  <div class="section-title">Mere</div>
-  <div class="note-box">${reportData.measurements}</div>
-</div>` : ""}
-
-${reportData.missingItems.length > 0 ? `
-<div class="section">
-  <div class="section-title">Nedostajući delovi</div>
-  <div>${reportData.missingItems.map(i => `<span class="tag">${i}</span>`).join("")}</div>
-</div>` : ""}
-
-${reportData.additionalNeeds.length > 0 ? `
-<div class="section">
-  <div class="section-title">Dodatne potrebe</div>
-  <ul style="margin:0;padding-left:18px">${reportData.additionalNeeds.map(n => `<li>${n}</li>`).join("")}</ul>
-</div>` : ""}
-
-${reportData.generalNotes ? `
-<div class="section">
-  <div class="section-title">Napomene</div>
-  <div class="note-box">${reportData.generalNotes}</div>
-</div>` : ""}
-
-${reportData.images.length > 0 ? `
-<div class="section">
-  <div class="section-title">Fotografije (${reportData.images.length})</div>
-  <div>${reportData.images.map(img => `<span style="display:inline-block;background:#f1f5f9;border:1px solid #e2e8f0;border-radius:6px;padding:4px 10px;margin:2px 4px 2px 0;font-size:11px">📷 ${img}</span>`).join("")}</div>
-</div>` : ""}
-
-<div class="footer">Stolarija Kovačević d.o.o. · Terenski izveštaj · ${today()}</div>
 </body></html>`;
 
   openPrintWindow(html);
@@ -227,63 +311,110 @@ export async function exportWorkOrderPDF(order: WorkOrder) {
   }
 
   const statusClass = orderData.status === "completed" ? "badge-ok" : orderData.status === "canceled" ? "badge-bad" : "badge-warn";
+  const typeLabel = labelWorkOrderType(orderData.type);
 
   const html = `<!DOCTYPE html><html><head><meta charset="utf-8"><title>Radni nalog</title>
-<style>${baseStyle}</style></head><body>
-<div class="header">
-  <div>
-    <h1>Radni nalog</h1>
-    <div class="meta">${typeLabels[orderData.type] || orderData.type}</div>
-    ${job ? `<div class="meta">Posao: ${job.jobNumber} — ${job.customer.fullName}</div>` : ""}
+<style>${docStyles}</style></head><body>
+<div class="doc-wrap">
+  <div class="doc-accent"></div>
+  <div class="doc-header">
+    <div class="doc-brand">
+      <div class="doc-brand-line">Stolarija Kovačević · Interni dokument</div>
+      <h1 class="doc-title">Radni nalog</h1>
+      <p class="doc-lead">${escapeHtml(typeLabel)}</p>
+      ${job ? `<p class="doc-lead">${escapeHtml(job.jobNumber)} · ${escapeHtml(job.customer.fullName)}</p>` : ""}
+    </div>
+    <div class="doc-meta-right">
+      <div><strong>Datum naloga</strong><br/>${escapeHtml(orderData.date || "—")}</div>
+      <div style="margin-top:10px"><strong>Štampano</strong><br/>${today()}</div>
+    </div>
   </div>
-  <div style="text-align:right">
-    <div class="meta">Datum: ${orderData.date}</div>
-    <div class="meta">Generisano: ${today()}</div>
+
+  <div class="section">
+    <div class="section-title">Status</div>
+    <span class="badge ${statusClass}">${statusLabels[orderData.status] || orderData.status}</span>
   </div>
-</div>
 
-<div class="section">
-  <div class="section-title">Status</div>
-  <span class="badge ${statusClass}">${statusLabels[orderData.status] || orderData.status}</span>
-</div>
-
-<div class="section">
-  <div class="section-title">Detalji</div>
-  <div class="grid">
-    <div><div class="field-label">Tip</div><div class="field-value">${typeLabels[orderData.type]}</div></div>
-    <div><div class="field-label">Tim</div><div class="field-value">${teamLabel}</div></div>
-    <div><div class="field-label">Datum</div><div class="field-value">${orderData.date}</div></div>
-    ${orderData.installationRef ? `<div><div class="field-label">Ref. ugradnje</div><div class="field-value">${orderData.installationRef}</div></div>` : ""}
-    ${orderData.productionRef ? `<div><div class="field-label">Ref. proizvodnje</div><div class="field-value">${orderData.productionRef}</div></div>` : ""}
+  <div class="section">
+    <div class="section-title">Detalji</div>
+    <div class="card"><div class="grid">
+      <div><div class="field-label">Tip</div><div class="field-value">${escapeHtml(typeLabel)}</div></div>
+      <div><div class="field-label">Tim</div><div class="field-value">${escapeHtml(teamLabel)}</div></div>
+      <div><div class="field-label">Datum</div><div class="field-value">${escapeHtml(orderData.date || "—")}</div></div>
+      ${orderData.installationRef ? `<div><div class="field-label">Ref. ugradnje</div><div class="field-value">${escapeHtml(orderData.installationRef)}</div></div>` : ""}
+      ${orderData.productionRef ? `<div><div class="field-label">Ref. proizvodnje</div><div class="field-value">${escapeHtml(orderData.productionRef)}</div></div>` : ""}
+    </div></div>
   </div>
-</div>
 
-<div class="section">
-  <div class="section-title">Opis posla</div>
-  <div class="note-box">${orderData.description}</div>
-</div>
-
-${job ? `
-<div class="section">
-  <div class="section-title">Podaci o kupcu</div>
-  <div class="grid">
-    <div><div class="field-label">Kupac</div><div class="field-value">${job.customer.fullName}</div></div>
-    <div><div class="field-label">Kontakt</div><div class="field-value">${job.customer.contactPerson}</div></div>
-    <div><div class="field-label">Adresa ugradnje</div><div class="field-value">${job.customer.installationAddress}</div></div>
-    <div><div class="field-label">Telefon</div><div class="field-value">${job.customer.phones[0] || "—"}</div></div>
+  <div class="section">
+    <div class="section-title">Opis posla</div>
+    <div class="note-box">${escapeHtml(orderData.description || "—")}</div>
   </div>
-</div>` : ""}
 
-<div style="margin-top:40px;border-top:1px solid #ccc;padding-top:16px">
-  <div class="grid" style="grid-template-columns:1fr 1fr 1fr">
-    <div><div class="field-label">Potpis predao</div><div style="border-bottom:1px solid #999;height:40px;margin-top:8px"></div></div>
-    <div><div class="field-label">Potpis primio</div><div style="border-bottom:1px solid #999;height:40px;margin-top:8px"></div></div>
-    <div><div class="field-label">Datum</div><div style="border-bottom:1px solid #999;height:40px;margin-top:8px"></div></div>
+  ${job ? `
+  <div class="section">
+    <div class="section-title">Kupac</div>
+    <div class="card"><div class="grid">
+      <div><div class="field-label">Naziv</div><div class="field-value">${escapeHtml(job.customer.fullName)}</div></div>
+      <div><div class="field-label">Kontakt</div><div class="field-value">${escapeHtml(job.customer.contactPerson)}</div></div>
+      <div><div class="field-label">Adresa ugradnje</div><div class="field-value">${escapeHtml(job.customer.installationAddress)}</div></div>
+      <div><div class="field-label">Telefon</div><div class="field-value">${escapeHtml(jobPrimaryPhone(job) || "—")}</div></div>
+    </div></div>
+  </div>` : ""}
+
+  <div class="sign-row">
+    <div class="section-title">Potpisi</div>
+    <div class="sign-grid">
+      <div><div class="field-label">Predao</div><div class="sign-line"></div></div>
+      <div><div class="field-label">Primio</div><div class="sign-line"></div></div>
+      <div><div class="field-label">Datum</div><div class="sign-line"></div></div>
+    </div>
   </div>
-</div>
 
-<div class="footer">Stolarija Kovačević d.o.o. · Radni nalog · ${today()}</div>
+  <div class="footer">Stolarija Kovačević d.o.o. · Radni nalog · ${today()}</div>
+</div>
 </body></html>`;
 
   openPrintWindow(html);
+}
+
+export type MaterialOrderExportOptions = {
+  /** Snimi generisani PDF u priloge narudžbine (R2), jedan fajl po narudžbini — prepis pri izmeni. */
+  attachGeneratedPdf?: boolean;
+  userId?: string;
+  onPdfAttached?: (result: MaterialOrderPdfUpsertResult) => void;
+  onPdfAttachFailed?: (message: string) => void;
+};
+
+export async function exportMaterialOrderPDF(order: MaterialOrder, options?: MaterialOrderExportOptions) {
+  const orderFromDb = await fetchMaterialOrderForExport(order.id);
+  const orderData = orderFromDb ?? order;
+  const job = orderData.jobId ? await fetchJobByIdForExport(orderData.jobId) : null;
+
+  const html = await buildNarudzbenicaDocumentHtml(orderData, job);
+  openPrintWindow(html);
+
+  if (options?.attachGeneratedPdf && options.userId) {
+    void (async () => {
+      try {
+        const { htmlDocumentToPdfBlob } = await import("@/lib/pdf-from-html");
+        const blob = await htmlDocumentToPdfBlob(html);
+        const displayFilename = buildMaterialOrderPdfDisplayName(
+          orderData.id,
+          job?.jobNumber ?? orderData.job?.jobNumber ?? null,
+        );
+        const result = await upsertMaterialOrderGeneratedPdf({
+          materialOrderId: orderData.id,
+          jobId: orderData.jobId,
+          blob,
+          uploadedBy: options.userId!,
+          displayFilename,
+        });
+        options.onPdfAttached?.(result);
+      } catch (e) {
+        const msg = e instanceof Error ? e.message : "Greška pri snimanju PDF priloga";
+        options.onPdfAttachFailed?.(msg);
+      }
+    })();
+  }
 }

@@ -63,7 +63,7 @@ export function useUsers() {
     mutationFn: async ({ userId, role }: { userId: string; role: UserRole }) => {
       const { error } = await supabase
         .from("users")
-        .update({ role })
+        .update({ role, active: true })
         .eq("id", userId);
 
       if (error) throw error;
@@ -87,12 +87,36 @@ export function useUsers() {
     },
   });
 
+  const updateActiveMutation = useMutation({
+    mutationFn: async ({ userId, active }: { userId: string; active: boolean }) => {
+      const { error } = await supabase.from("users").update({ active }).eq("id", userId);
+      if (error) throw error;
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["users"] });
+    },
+  });
+
+  const removeUserMutation = useMutation({
+    mutationFn: async (userId: string) => {
+      const { error } = await supabase.rpc("admin_delete_user", { target_user_id: userId });
+      if (error) throw error;
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["users"] });
+    },
+  });
+
   return {
     users,
     isLoading,
     updateRole: updateRoleMutation.mutateAsync,
     updateFullName: updateFullNameMutation.mutateAsync,
+    updateUserActive: updateActiveMutation.mutateAsync,
+    removeUser: removeUserMutation.mutateAsync,
     isUpdating: updateRoleMutation.isPending,
     isUpdatingFullName: updateFullNameMutation.isPending,
+    isUpdatingActive: updateActiveMutation.isPending,
+    isRemovingUser: removeUserMutation.isPending,
   };
 }

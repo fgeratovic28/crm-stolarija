@@ -37,13 +37,13 @@ INSERT INTO customers (id, customer_number, name, billing_address, installation_
 
 -- 4. POSLOVI (Jobs)
 INSERT INTO jobs (id, customer_id, job_number, status, summary, total_price, vat_amount, advance_payment, scheduled_date, created_at) VALUES
-('a0000000-0000-0000-0000-000000000001', 'c0000000-0000-0000-0000-000000000001', 'POS-2025-001', 'in_progress', 'Kompletna zamena prozora – 12 PVC prozora sa trostrukim staklom, uključujući demontažu starih okvira', 485000, 97000, 145500, '2025-04-10 09:00:00+00', '2025-01-15'),
-('a0000000-0000-0000-0000-000000000002', 'c0000000-0000-0000-0000-000000000002', 'POS-2025-002', 'waiting_materials', 'Staklena pregradna vrata za kancelariju – 4 klizna staklena vrata sa aluminijumskim okvirima', 320000, 64000, 96000, '2025-04-18 10:00:00+00', '2025-02-01'),
+('a0000000-0000-0000-0000-000000000001', 'c0000000-0000-0000-0000-000000000001', 'POS-2025-001', 'in_production', 'Kompletna zamena prozora – 12 PVC prozora sa trostrukim staklom, uključujući demontažu starih okvira', 485000, 97000, 145500, '2025-04-10 09:00:00+00', '2025-01-15'),
+('a0000000-0000-0000-0000-000000000002', 'c0000000-0000-0000-0000-000000000002', 'POS-2025-002', 'in_production', 'Staklena pregradna vrata za kancelariju – 4 klizna staklena vrata sa aluminijumskim okvirima', 320000, 64000, 96000, '2025-04-18 10:00:00+00', '2025-02-01'),
 ('a0000000-0000-0000-0000-000000000003', 'c0000000-0000-0000-0000-000000000003', 'POS-2025-003', 'new', 'Zatvaranje balkona PVC profilima i komarnicima', 175000, 35000, 0, NULL, '2025-03-10'),
 ('a0000000-0000-0000-0000-000000000004', 'c0000000-0000-0000-0000-000000000004', 'POS-2025-004', 'scheduled', 'Ulaz u hotelski lobi – automatska klizna vrata sa sigurnosnim staklom', 890000, 178000, 445000, '2025-04-22 08:30:00+00', '2025-02-15'),
 ('a0000000-0000-0000-0000-000000000005', 'c0000000-0000-0000-0000-000000000005', 'POS-2025-005', 'complaint', 'Zamena kuhinjskog prozora – prijavljeno propuštanje nakon ugradnje', 65000, 13000, 65000, NULL, '2025-01-20'),
 ('a0000000-0000-0000-0000-000000000006', 'c0000000-0000-0000-0000-000000000001', 'POS-2025-006', 'completed', 'Unutrašnja drvena vrata – 5 punih hrastovih vrata sa okvirima', 250000, 50000, 250000, '2025-01-10 10:00:00+00', '2024-11-20'),
-('a0000000-0000-0000-0000-000000000007', 'c0000000-0000-0000-0000-000000000004', 'POS-2025-007', 'active', 'Roletne za hotelske sobe – 45 roletni sa elektromotorom', 1250000, 250000, 375000, '2025-05-15 08:00:00+00', '2025-03-01');
+('a0000000-0000-0000-0000-000000000007', 'c0000000-0000-0000-0000-000000000004', 'POS-2025-007', 'measuring', 'Roletne za hotelske sobe – 45 roletni sa elektromotorom', 1250000, 250000, 375000, '2025-05-15 08:00:00+00', '2025-03-01');
 
 -- 5. AKTIVNOSTI (Activities)
 INSERT INTO activities (id, job_id, type, description, date) VALUES

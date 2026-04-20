@@ -33,3 +33,4 @@ release
 
 # Vite (dependency scan cache)
 vite.config.ts.timestamp-*.mjs
+.env*.local

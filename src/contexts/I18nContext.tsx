@@ -8,6 +8,11 @@ type Dictionary = Record<string, string>;
 const sr: Dictionary = {
   "nav.dashboard": "Kontrolna tabla",
   "nav.jobs": "Kupci / Poslovi",
+  "nav.customers": "Kupci",
+  "nav.jobsOnly": "Poslovi",
+  "nav.financeOverview": "Finansije",
+  "nav.financePayments": "Plaćanja",
+  "nav.financeReports": "Izveštaji",
   "nav.completedJobsMap": "Mapa zavrsenih poslova",
   "nav.activities": "Aktivnosti",
   "nav.finances": "Finansije",
@@ -52,7 +57,8 @@ const sr: Dictionary = {
   "settings.notifications.status": "Promena statusa posla",
   "settings.notifications.statusDesc": "Obavesti kada se status posla promeni",
   "settings.notifications.staleStatus": "SLA — zastoj u statusu",
-  "settings.notifications.staleStatusDesc": "Aktivnost i obavestenje ako posao predugo stoji u Novi / Aktivan / Ceka materijal",
+  "settings.notifications.staleStatusDesc":
+    "Aktivnost i obaveštenje ako posao predugo stoji u Upit / Ponuda poslata / Merenje / U proizvodnji",
   "settings.notifications.staleStatusDays": "SLA prag (dani bez promene statusa)",
   "settings.notifications.staleStatusDaysHint": "Nakon ovog broja dana u istom statusu salje se podsetnik (podrazumevano 7)",
   "settings.notifications.overdueDays": "Rok dospelosti (dani)",
@@ -100,6 +106,11 @@ const sr: Dictionary = {
 const en: Dictionary = {
   "nav.dashboard": "Dashboard",
   "nav.jobs": "Customers / Jobs",
+  "nav.customers": "Customers",
+  "nav.jobsOnly": "Jobs",
+  "nav.financeOverview": "Finances",
+  "nav.financePayments": "Payments",
+  "nav.financeReports": "Reports",
   "nav.completedJobsMap": "Completed Jobs Map",
   "nav.activities": "Activities",
   "nav.finances": "Finances",

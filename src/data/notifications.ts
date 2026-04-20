@@ -194,7 +194,7 @@ function generateNotifications(
 
   if (settings.notifStaleJobStatus) {
     const threshold = settings.jobStaleStatusDays;
-    const slaStatuses = new Set<Job["status"]>(["new", "active", "waiting_materials"]);
+    const slaStatuses = new Set<Job["status"]>(["new", "quote_sent", "measuring", "in_production"]);
     jobs
       .filter((j) => slaStatuses.has(j.status) && j.statusLocked !== true)
       .forEach((j) => {

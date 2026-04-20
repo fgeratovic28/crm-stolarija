@@ -1,11 +1,14 @@
 import { useState } from "react";
 import { useNavigate } from "react-router-dom";
-import { ClipboardList, XCircle, FileDown, Plus, Pencil, FileText, MapPin, Info } from "lucide-react";
+import { ClipboardList, XCircle, FileDown, Plus, Pencil, FileText, MapPin, Info, UserPlus } from "lucide-react";
 import { GenericBadge } from "@/components/shared/StatusBadge";
 import { EmptyState } from "@/components/shared/EmptyState";
 import { SectionHeader } from "@/components/shared/SectionHeader";
 import { ConfirmDialog } from "@/components/shared/ConfirmDialog";
 import { Button } from "@/components/ui/button";
+import { Label } from "@/components/ui/label";
+import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { useRole } from "@/contexts/RoleContext";
 import { cn } from "@/lib/utils";
 import { toast } from "sonner";
@@ -19,6 +22,7 @@ import { NewFieldReportModal } from "@/components/modals/NewFieldReportModal";
 import type { WorkOrder, FieldReport } from "@/types";
 import { fieldReportFlowForWorkOrderType, isFieldExecutionRole } from "@/lib/field-team-access";
 import { useAuthStore } from "@/stores/auth-store";
+import { labelWorkOrderType } from "@/lib/activity-labels";
 
 const statusVariant: Record<string, "success" | "warning" | "info" | "muted"> = {
   completed: "success", in_progress: "info", pending: "warning", canceled: "muted",
@@ -26,16 +30,6 @@ const statusVariant: Record<string, "success" | "warning" | "info" | "muted"> = 
 
 const statusLabels: Record<string, string> = {
   completed: "Završen", in_progress: "U toku", pending: "Na čekanju", canceled: "Otkazan",
-};
-
-const typeLabels: Record<string, string> = {
-  measurement: "Merenje", measurement_verification: "Provera mera",
-  installation: "Ugradnja",
-  complaint: "Reklamacija",
-  service: "Servis",
-  production: "Proizvodni nalog",
-  site_visit: "Terenska poseta",
-  control_visit: "Kontrolna poseta",
 };
 
 type WorkOrdersTabProps = {
@@ -56,7 +50,9 @@ export function WorkOrdersTab({ jobId, workOrders }: WorkOrdersTabProps) {
     const flow = fieldReportFlowForWorkOrderType(order.type);
     return (
       (flow === "mounting" && canPerformAction("add_mounting_report")) ||
-      (flow === "field" && canPerformAction("add_field_report"))
+      (flow === "field" && canPerformAction("add_field_report")) ||
+      (flow === "production" &&
+        (canPerformAction("add_field_report") || canPerformAction("update_production_status")))
     );
   };
 
@@ -72,6 +68,9 @@ export function WorkOrdersTab({ jobId, workOrders }: WorkOrdersTabProps) {
   const [newReportOpen, setNewReportOpen] = useState(false);
   const [selectedFieldReport, setSelectedFieldReport] = useState<FieldReport | null>(null);
   const [selectedWorkOrderId, setSelectedWorkOrderId] = useState<string | undefined>(undefined);
+  /** Brza dodela tima (popover) — ID naloga čiji je popover otvoren. */
+  const [assignTeamPopoverWoId, setAssignTeamPopoverWoId] = useState<string | null>(null);
+  const [assignTeamId, setAssignTeamId] = useState("");
 
   const handleCancel = (order: WorkOrder) => {
     updateWorkOrder.mutate({ ...order, status: "canceled" });
@@ -133,6 +132,12 @@ export function WorkOrdersTab({ jobId, workOrders }: WorkOrdersTabProps) {
       order.status === "pending"
     );
   };
+
+  const canQuickAssignTeam = (order: WorkOrder) =>
+    (canPerformAction("edit_work_order") || canPerformAction("update_job_status")) &&
+    !order.assignedTeamId &&
+    order.status !== "completed" &&
+    order.status !== "canceled";
 
   const handleAddOrder = () => {
     setSelectedOrder(undefined);
@@ -196,8 +201,11 @@ export function WorkOrdersTab({ jobId, workOrders }: WorkOrdersTabProps) {
                   </div>
                   <div className="flex-1 min-w-0">
                     <div className="flex items-center gap-2 mb-1 flex-wrap">
-                      <span className="font-medium text-sm text-foreground">{typeLabels[o.type]}</span>
+                      <span className="font-medium text-sm text-foreground">{labelWorkOrderType(o.type)}</span>
                       <GenericBadge label={statusLabels[o.status]} variant={statusVariant[o.status]} />
+                      {!o.assignedTeamId ? (
+                        <GenericBadge label="Neraspoređeno" variant="warning" />
+                      ) : null}
                       {orderWithJob.job && !canPerformAction("view_own_team_only") && (
                         <button className="text-[11px] text-primary hover:underline font-medium" onClick={() => navigate(`/jobs/${orderWithJob.job?.id}`)}>
                           {orderWithJob.job.jobNumber}
@@ -225,7 +233,12 @@ export function WorkOrdersTab({ jobId, workOrders }: WorkOrdersTabProps) {
                     )}
 
                     <div className="flex flex-wrap gap-x-4 gap-y-1 mt-2 text-xs text-muted-foreground">
-                      <span>Tim: <span className="text-foreground font-medium">{team?.name || "Nedodeljen"}</span></span>
+                      <span>
+                        Tim:{" "}
+                        <span className="text-foreground font-medium">
+                          {team?.name || (o.assignedTeamId ? "—" : "Neraspoređeno")}
+                        </span>
+                      </span>
                       <span>Datum: <span className="text-foreground font-medium">{o.date}</span></span>
                       {o.productionRef && <span>Proiz: <span className="font-medium">{o.productionRef}</span></span>}
                       {o.installationRef && <span>Ugr: <span className="font-medium">{o.installationRef}</span></span>}
@@ -238,6 +251,79 @@ export function WorkOrdersTab({ jobId, workOrders }: WorkOrdersTabProps) {
                     <Button variant="ghost" size="sm" className="text-muted-foreground hover:text-primary" onClick={() => void exportWorkOrderPDF(o)}>
                       <FileDown className="w-4 h-4 mr-1" /> PDF
                     </Button>
+                    {canQuickAssignTeam(o) && (
+                      <Popover
+                        open={assignTeamPopoverWoId === o.id}
+                        onOpenChange={(open) => {
+                          if (open) {
+                            setAssignTeamPopoverWoId(o.id);
+                            setAssignTeamId("");
+                          } else {
+                            setAssignTeamPopoverWoId(null);
+                          }
+                        }}
+                      >
+                        <PopoverTrigger asChild>
+                          <Button variant="outline" size="sm" className="shrink-0 border-warning/40 text-foreground hover:bg-warning/10">
+                            <UserPlus className="w-4 h-4 mr-1" />
+                            Dodeli tim
+                          </Button>
+                        </PopoverTrigger>
+                        <PopoverContent className="w-80" align="end">
+                          <div className="space-y-3">
+                            <div>
+                              <p className="text-sm font-medium">Dodela tima</p>
+                              <p className="text-xs text-muted-foreground mt-0.5">
+                                {labelWorkOrderType(o.type)} · {o.date}
+                              </p>
+                            </div>
+                            <div className="space-y-2">
+                              <Label className="text-xs">Tim</Label>
+                              <Select value={assignTeamId || undefined} onValueChange={setAssignTeamId}>
+                                <SelectTrigger>
+                                  <SelectValue placeholder="Izaberite tim" />
+                                </SelectTrigger>
+                                <SelectContent>
+                                  {(teams ?? [])
+                                    .filter((t) => t.active)
+                                    .map((t) => (
+                                      <SelectItem key={t.id} value={t.id}>
+                                        {t.name}
+                                      </SelectItem>
+                                    ))}
+                                </SelectContent>
+                              </Select>
+                            </div>
+                            {!(teams ?? []).some((t) => t.active) ? (
+                              <p className="text-xs text-destructive">Nema aktivnih timova. Dodajte tim u podešavanjima.</p>
+                            ) : null}
+                            <div className="flex justify-end gap-2 pt-1">
+                              <Button variant="ghost" size="sm" type="button" onClick={() => setAssignTeamPopoverWoId(null)}>
+                                Otkaži
+                              </Button>
+                              <Button
+                                size="sm"
+                                type="button"
+                                disabled={!assignTeamId || updateWorkOrder.isPending}
+                                onClick={() => {
+                                  updateWorkOrder.mutate(
+                                    { ...o, assignedTeamId: assignTeamId },
+                                    {
+                                      onSuccess: () => {
+                                        setAssignTeamPopoverWoId(null);
+                                        setAssignTeamId("");
+                                      },
+                                    },
+                                  );
+                                }}
+                              >
+                                Sačuvaj
+                              </Button>
+                            </div>
+                          </div>
+                        </PopoverContent>
+                      </Popover>
+                    )}
                     {isFieldWorker && !!user?.teamId && o.assignedTeamId === user.teamId && o.status === "in_progress" && (
                       <Button
                         variant="ghost"
@@ -262,6 +348,20 @@ export function WorkOrdersTab({ jobId, workOrders }: WorkOrdersTabProps) {
                           "text-muted-foreground hover:text-primary",
                           fieldReports?.some(r => r.workOrderId === o.id) && "text-primary font-medium"
                         )} 
+                        disabled={
+                          !!activeOwnTeamOrder &&
+                          activeOwnTeamOrder.id !== o.id &&
+                          o.status !== "completed" &&
+                          o.status !== "canceled"
+                        }
+                        title={
+                          !!activeOwnTeamOrder &&
+                          activeOwnTeamOrder.id !== o.id &&
+                          o.status !== "completed" &&
+                          o.status !== "canceled"
+                            ? "Završite nalog koji je u toku (sačuvajte izveštaj), pa zatim ostale."
+                            : undefined
+                        }
                         onClick={() => handleReportAction(o.id)}
                       >
                         <FileText className="w-4 h-4 mr-1" /> 
@@ -297,7 +397,7 @@ export function WorkOrdersTab({ jobId, workOrders }: WorkOrdersTabProps) {
                           </Button>
                         }
                         title="Otkazati ovaj radni nalog?"
-                        description={`Ovo će otkazati radni nalog "${typeLabels[o.type]}" dodeljen timu ${team?.name} za ${o.date}.`}
+                        description={`Ovo će otkazati radni nalog "${labelWorkOrderType(o.type)}"${team?.name ? ` dodeljen timu ${team.name}` : " (neraspoređen)"} za ${o.date}.`}
                         confirmLabel="Otkaži nalog"
                         variant="warning"
                         onConfirm={() => handleCancel(o)}

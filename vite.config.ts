@@ -14,6 +14,10 @@ export default defineConfig(({ mode }: { mode: string }) => {
 
   return {
   base: electronBuild ? "./" : "/",
+  optimizeDeps: {
+    /** jspdf dinamički vuče canvg (SVG); mora biti instaliran i uključen u pre-bundle. */
+    include: ["jspdf", "html2canvas", "canvg"],
+  },
   define: {
     "import.meta.env.VITE_ELECTRON_BUILD": JSON.stringify(electronBuild ? "true" : ""),
   },

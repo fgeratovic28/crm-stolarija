@@ -7,6 +7,7 @@ import { isFieldExecutionRole } from "@/lib/field-team-access";
 import { upsertSystemActivity } from "@/lib/activity-automation";
 import { labelWorkOrderStatus, labelWorkOrderType } from "@/lib/activity-labels";
 import { recomputeJobStatus } from "@/lib/job-status-automation";
+import { ensureWorkflowWorkOrders } from "@/lib/work-order-workflow-automation";
 
 export function useWorkOrders(jobId?: string) {
   const { toast } = useToast();
@@ -19,6 +20,11 @@ export function useWorkOrders(jobId?: string) {
       await recomputeJobStatus(targetJobId, user?.id ?? null);
     } catch (err) {
       console.warn("Auto status recompute failed after work order change:", err);
+    }
+    try {
+      await ensureWorkflowWorkOrders(targetJobId);
+    } catch (err) {
+      console.warn("ensureWorkflowWorkOrders posle promene RN:", err);
     }
   };
 
@@ -60,14 +66,16 @@ export function useWorkOrders(jobId?: string) {
         date: d.date,
         status: d.status,
         attachmentName: d.file_id ? "attachment" : undefined,
-        installationRef: undefined,
-        productionRef: undefined,
-        job: d.jobs ? { 
-          id: d.jobs.id, 
-          jobNumber: d.jobs.job_number,
-          installationAddress: d.jobs.installation_address 
-        } : undefined
-      })) as (WorkOrder & { job?: { id: string, jobNumber: string, installationAddress?: string } })[];
+        installationRef: (d as { installation_ref?: string | null }).installation_ref ?? undefined,
+        productionRef: (d as { production_ref?: string | null }).production_ref ?? undefined,
+        job: d.jobs
+          ? {
+              id: d.jobs.id,
+              jobNumber: d.jobs.job_number,
+              installationAddress: d.jobs.installation_address,
+            }
+          : undefined,
+      })) as (WorkOrder & { job?: { id: string; jobNumber: string; installationAddress?: string } })[];
     },
   });
 
@@ -118,9 +126,6 @@ export function useWorkOrders(jobId?: string) {
 
   const updateWorkOrder = useMutation({
     mutationFn: async (order: WorkOrder) => {
-      if (!order.assignedTeamId) {
-        throw new Error("Tim je obavezan za radni nalog.");
-      }
       const prev = await supabase.from("work_orders").select("status").eq("id", order.id).single();
       if (prev.error) throw prev.error;
       const previousStatus = prev.data?.status as string | undefined;
@@ -129,7 +134,7 @@ export function useWorkOrders(jobId?: string) {
         .update({
           type: order.type,
           description: order.description,
-          team_id: order.assignedTeamId,
+          team_id: order.assignedTeamId ?? null,
           date: order.date,
           status: order.status,
         })

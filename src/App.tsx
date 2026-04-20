@@ -24,11 +24,13 @@ import FilesPage from "./pages/FilesPage";
 import UsersPage from "./pages/UsersPage";
 import TeamsPage from "./pages/TeamsPage";
 import SettingsPage from "./pages/SettingsPage";
+import ProfilePage from "./pages/ProfilePage";
 import SuppliersPage from "./pages/SuppliersPage";
 import VehiclesPage from "./pages/VehiclesPage";
 import WorkersPage from "./pages/WorkersPage";
 import CompletedJobsMapPage from "./pages/CompletedJobsMapPage";
 import NotFound from "./pages/NotFound";
+import PublicNarudzbenicaPage from "./pages/PublicNarudzbenicaPage";
 import PendingApprovalPage from "./pages/PendingApprovalPage";
 
 import { OfflineBanner } from "@/components/shared/OfflineBanner";
@@ -91,6 +93,7 @@ const AppContent = () => {
     <MaintenanceModeGate>
     <Routes>
       <Route path="/login" element={<LoginPage />} />
+      <Route path="/narudzbenica/:token" element={<PublicNarudzbenicaPage />} />
       <Route
         path="/pending-approval"
         element={
@@ -107,13 +110,13 @@ const AppContent = () => {
       } />
       
       <Route path="/jobs" element={
-        <ProtectedRoute module="jobs">
+        <ProtectedRoute module={["jobs", "customers"]}>
           <JobsListPage />
         </ProtectedRoute>
       } />
 
       <Route path="/jobs-map" element={
-        <ProtectedRoute module="jobs">
+        <ProtectedRoute module={["jobs", "customers"]}>
           <CompletedJobsMapPage />
         </ProtectedRoute>
       } />
@@ -125,13 +128,13 @@ const AppContent = () => {
       } />
 
       <Route path="/customers/new" element={
-        <ProtectedRoute module="jobs">
+        <ProtectedRoute module={["customers", "jobs"]}>
           <CustomersPage />
         </ProtectedRoute>
       } />
 
       <Route path="/customers/:id/edit" element={
-        <ProtectedRoute module="jobs">
+        <ProtectedRoute module={["customers", "jobs"]}>
           <CustomersPage />
         </ProtectedRoute>
       } />
@@ -189,7 +192,7 @@ const AppContent = () => {
           <FilesPage />
         </ProtectedRoute>
       } />
-      
+
       <Route path="/users" element={
         <ProtectedRoute module="users">
           <UsersPage />
@@ -202,6 +205,12 @@ const AppContent = () => {
         </ProtectedRoute>
       } />
       
+      <Route path="/profile" element={
+        <ProtectedRoute>
+          <ProfilePage />
+        </ProtectedRoute>
+      } />
+
       <Route path="/settings" element={
         <ProtectedRoute module="settings">
           <SettingsPage />

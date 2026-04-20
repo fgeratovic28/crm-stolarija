@@ -26,7 +26,9 @@ import { useToast } from "@/hooks/use-toast";
 import type { FieldTeamWorkOrder } from "@/hooks/use-field-team-data";
 import { distanceKm, useFieldTeamMapMarkers, type FieldTeamMapMarker } from "@/hooks/use-field-team-map";
 import { labelWorkOrderType } from "@/lib/activity-labels";
+import { MAP_TILE_ATTRIBUTION, MAP_TILE_SUBDOMAINS, MAP_TILE_URL } from "@/lib/map-tiles";
 import { cn } from "@/lib/utils";
+import { jobPrimaryPhone } from "@/lib/job-contact-phone";
 
 const defaultCenter: LatLngTuple = [44.7866, 20.4489];
 
@@ -83,9 +85,11 @@ function openDirections(opts: {
 }
 
 function getCustomerPhone(wo: FieldTeamWorkOrder): string | undefined {
-  const c = wo.job?.customer;
-  if (!c) return undefined;
-  return c.phones?.[0];
+  const p = jobPrimaryPhone({
+    customerPhone: wo.job?.customerPhone,
+    customer: wo.job?.customer,
+  });
+  return p || undefined;
 }
 
 type FieldTeamWorkOrdersMapProps = {
@@ -208,8 +212,9 @@ export function FieldTeamWorkOrdersMap({ workOrders, onOpenWorkOrder }: FieldTea
             <div className="h-[340px] w-full overflow-hidden rounded-xl border">
               <MapContainer center={mapCenter} zoom={12} scrollWheelZoom className="h-full w-full z-0">
                 <TileLayer
-                  attribution='&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a>'
-                  url="https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png"
+                  attribution={MAP_TILE_ATTRIBUTION}
+                  url={MAP_TILE_URL}
+                  subdomains={MAP_TILE_SUBDOMAINS}
                 />
                 <FitBounds markerPositions={markerPositions} userPos={userPos ? [userPos.lat, userPos.lng] : null} />
                 {userPos && (

@@ -68,6 +68,7 @@ export async function performClientSignOut(queryClient: QueryClient): Promise<Er
 
   const auth = useAuthStore.getState();
   auth.setPendingApproval(false);
+  auth.setAccessBlockReason(null);
   auth.setUser(null);
 
   return signOutError;

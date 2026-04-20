@@ -19,6 +19,7 @@ import { ScrollArea } from "@/components/ui/scroll-area";
 import { TableSkeleton } from "@/components/shared/Skeletons";
 import { useCompletedJobsMap, useJobActivitiesForMap, type CompletedJobMapItem } from "@/hooks/use-completed-jobs-map";
 import { formatDateByAppLanguage } from "@/lib/app-settings";
+import { MAP_TILE_ATTRIBUTION, MAP_TILE_SUBDOMAINS, MAP_TILE_URL } from "@/lib/map-tiles";
 
 const defaultCenter: LatLngTuple = [44.7866, 20.4489];
 
@@ -179,8 +180,9 @@ export default function CompletedJobsMapPage() {
             <div className="h-[560px] w-full overflow-hidden rounded-xl border">
               <MapContainer center={mapCenter} zoom={11} scrollWheelZoom className="h-full w-full z-0">
                 <TileLayer
-                  attribution='&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors'
-                  url="https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png"
+                  attribution={MAP_TILE_ATTRIBUTION}
+                  url={MAP_TILE_URL}
+                  subdomains={MAP_TILE_SUBDOMAINS}
                 />
                 <MarkerClusterGroup
                   chunkedLoading

@@ -24,11 +24,12 @@ import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { labelMaterialType } from "@/lib/activity-labels";
 
 const STATUS_COLORS: Record<string, string> = {
-  new: "hsl(210, 80%, 55%)",
-  active: "hsl(142, 60%, 45%)",
-  in_progress: "hsl(221, 83%, 53%)",
-  waiting_materials: "hsl(38, 92%, 50%)",
-  scheduled: "hsl(200, 70%, 50%)",
+  new: "hsl(215, 16%, 47%)",
+  quote_sent: "hsl(199, 89%, 48%)",
+  measuring: "hsl(152, 57%, 40%)",
+  in_production: "hsl(38, 92%, 48%)",
+  scheduled: "hsl(239, 84%, 58%)",
+  installation_in_progress: "hsl(221, 83%, 53%)",
   completed: "hsl(142, 71%, 40%)",
   complaint: "hsl(0, 72%, 51%)",
   service: "hsl(220, 9%, 46%)",
@@ -49,9 +50,10 @@ export default function DashboardPage() {
   const appSettings = readAppSettingsCache();
   const formatCurrency = (n: number) => formatCurrencyBySettings(n);
 
+  const pipelineStatuses: JobStatus[] = ["measuring", "in_production", "installation_in_progress"];
   const stats = {
     activeJobs: jobs.filter(j => j.status !== "completed").length,
-    inProgress: jobs.filter(j => j.status === "in_progress").length,
+    inProgress: jobs.filter(j => pipelineStatuses.includes(j.status)).length,
     unpaidJobs: jobs.filter(j => j.unpaidBalance > 0).length,
     pendingOrders: dashboardStats?.pendingOrders || 0,
     upcomingInstallations: dashboardStats?.upcomingInstallations || 0,
@@ -153,15 +155,15 @@ export default function DashboardPage() {
         <StaggerContainer className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4 mb-6">
           {hasAccess("jobs") && (
             <StaggerItem>
-              <div className="cursor-pointer" onClick={() => navigate("/jobs?status=active")}>
+              <div className="cursor-pointer" onClick={() => navigate("/jobs")}>
                 <StatCard title="Aktivni poslovi" value={stats.activeJobs} icon={Briefcase} />
               </div>
             </StaggerItem>
           )}
           {hasAccess("jobs") && (
             <StaggerItem>
-              <div className="cursor-pointer" onClick={() => navigate("/jobs?status=in_progress")}>
-                <StatCard title="U toku" value={stats.inProgress} icon={TrendingUp} />
+              <div className="cursor-pointer" onClick={() => navigate("/jobs?status=in_production")}>
+                <StatCard title="Merenje / proizvodnja / ugradnja" value={stats.inProgress} icon={TrendingUp} />
               </div>
             </StaggerItem>
           )}

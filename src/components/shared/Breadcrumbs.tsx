@@ -13,6 +13,7 @@ const routeLabels: Record<string, string> = {
   files: "Fajlovi",
   users: "Korisnici",
   settings: "Podešavanja",
+  profile: "Profil",
   login: "Prijava",
 };
 

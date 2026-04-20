@@ -1,16 +1,13 @@
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { supabase } from "@/lib/supabase";
-import type { Payment, MaterialOrder, WorkOrder, FieldReport } from "@/types";
+import type { Payment, MaterialOrder, WorkOrder, FieldReport, FieldReportDetails } from "@/types";
 import { toast } from "sonner";
 import { useAuthStore } from "@/stores/auth-store";
 import { mapDbToActivity } from "@/hooks/use-activities";
 import { mapDbToFile } from "@/hooks/use-files";
-import {
-  isMontazaRole,
-  isTerenRole,
-  TEREN_WORK_ORDER_TYPES,
-} from "@/lib/field-team-access";
+import { isFieldExecutionRole } from "@/lib/field-team-access";
 import { upsertSystemActivity } from "@/lib/activity-automation";
+import { mapMaterialOrderRow } from "@/lib/map-material-order";
 
 type ErrorWithMessage = { message?: string };
 const getErrorMessage = (err: unknown) =>
@@ -70,37 +67,16 @@ export function useJobRelatedData(jobId: string | undefined) {
         .from("material_orders")
         .select(`
           *,
-          suppliers (id, name, contact_person)
+          suppliers (id, name, contact_person, address),
+          jobs (id, job_number)
         `)
         .eq("job_id", jobId)
         .order("request_date", { ascending: false });
 
       if (error) throw error;
-      return data.map(d => {
-        const supplierData = Array.isArray(d.suppliers) ? d.suppliers[0] : d.suppliers;
-        return {
-          id: d.id,
-          jobId: d.job_id,
-          materialType: d.material_type,
-          supplierId: d.supplier_id || "",
-          supplier: supplierData?.name || d.supplier,
-          supplierContact: supplierData?.contact_person || d.supplier_contact,
-          orderDate: d.request_date,
-          requestDate: d.request_date,
-          expectedDelivery: d.expected_delivery_date || d.delivery_date,
-          deliveryDate: d.delivery_date,
-          supplierPrice: d.supplier_price,
-          price: d.supplier_price,
-          paid: d.paid,
-          barcode: d.barcode,
-          deliveryStatus: d.delivery_status,
-          quantityVerified: d.delivered_ok,
-          deliveryVerified: d.delivered_ok,
-          allDelivered: d.delivery_status === "delivered",
-          requestFile: d.request_file,
-          quoteFile: d.quote_file,
-          notes: d.notes,
-        };
+      return data.map((d) => {
+        const jobData = Array.isArray(d.jobs) ? d.jobs[0] : d.jobs;
+        return mapMaterialOrderRow(d as Record<string, unknown>, jobData as { id: string; job_number: string } | null | undefined);
       }) as MaterialOrder[];
     },
     enabled,
@@ -121,14 +97,21 @@ export function useJobRelatedData(jobId: string | undefined) {
       if (error) throw error;
       return data.map(d => {
         const teamData = Array.isArray(d.teams) ? d.teams[0] : d.teams;
+        const teamName =
+          teamData && typeof teamData === "object" && teamData !== null && "name" in teamData
+            ? String((teamData as { name?: string }).name ?? "").trim()
+            : "";
         return {
           id: d.id,
           jobId: d.job_id,
           type: d.type,
           description: d.description,
           assignedTeamId: d.team_id,
+          assignedTeamName: teamName || undefined,
           date: d.date,
           status: d.status,
+          installationRef: (d as { installation_ref?: string | null }).installation_ref ?? undefined,
+          productionRef: (d as { production_ref?: string | null }).production_ref ?? undefined,
         };
       }) as WorkOrder[];
     },
@@ -136,11 +119,9 @@ export function useJobRelatedData(jobId: string | undefined) {
   });
 
   const fieldReports = useQuery({
-    queryKey: ["field-reports", jobId, user?.id, user?.role],
+    queryKey: ["field-reports", jobId, user?.id, user?.role, user?.teamId],
     queryFn: async () => {
-      const isMontaza = isMontazaRole(user?.role);
-      const isTeren = isTerenRole(user?.role);
-      const isFieldScoped = isMontaza || isTeren;
+      const isFieldScoped = isFieldExecutionRole(user?.role);
       const selectStr = isFieldScoped
         ? "*, work_orders!inner(id, team_id, type)"
         : "*, work_orders!left(id, team_id, type)";
@@ -154,11 +135,6 @@ export function useJobRelatedData(jobId: string | undefined) {
       if (isFieldScoped) {
         if (!user?.teamId) return [];
         query = query.eq("work_orders.team_id", user.teamId);
-        if (isMontaza) {
-          query = query.eq("work_orders.type", "installation");
-        } else if (isTeren) {
-          query = query.in("work_orders.type", [...TEREN_WORK_ORDER_TYPES]);
-        }
       }
 
       const { data, error } = await query;
@@ -166,21 +142,36 @@ export function useJobRelatedData(jobId: string | undefined) {
       if (error) throw error;
       return data.map(d => {
         const woData = d.work_orders;
+        const rawDetails = (d as { details?: unknown }).details;
+        const detailsParsed =
+          rawDetails && typeof rawDetails === "object" && !Array.isArray(rawDetails)
+            ? (rawDetails as FieldReportDetails)
+            : undefined;
+        const estH = (d as { estimated_installation_hours?: unknown }).estimated_installation_hours;
+        const estNum =
+          estH === null || estH === undefined
+            ? undefined
+            : typeof estH === "number"
+              ? estH
+              : Number(estH);
+
         return {
           id: d.id,
           jobId: d.job_id,
           address: d.address,
           arrived: d.arrived,
           arrivalDate: d.arrival_datetime,
-          siteCanceled: d.site_canceled,
-          cancelReason: d.cancel_reason,
+          siteCanceled: !!d.site_canceled,
+          cancelReason: typeof d.cancel_reason === "string" ? d.cancel_reason : undefined,
           jobCompleted: d.completed,
           everythingOk: d.everything_ok,
           issueDescription: d.issues,
+          details: detailsParsed,
+          estimatedInstallationHours: Number.isFinite(estNum) ? estNum : undefined,
           handoverDate: d.handover_date,
           images: d.images || [],
           missingItems: d.missing_items || [],
-          additionalNeeds: [],
+          additionalNeeds: Array.isArray(d.additional_needs) ? d.additional_needs : [],
           measurements: d.measurements,
           generalNotes: d.general_report,
           workOrderId: d.work_order_id,

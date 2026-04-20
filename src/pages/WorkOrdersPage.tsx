@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useMemo, useState } from "react";
 import { ClipboardList, AlertTriangle } from "lucide-react";
 import { AppLayout } from "@/components/layout/AppLayout";
 import { PageHeader } from "@/components/shared/PageHeader";
@@ -7,36 +7,46 @@ import { PageTransition } from "@/components/shared/PageTransition";
 import { CardListSkeleton } from "@/components/shared/Skeletons";
 import { FilterBar, ActiveFilterChips, type FilterConfig } from "@/components/shared/FilterBar";
 import { useWorkOrders } from "@/hooks/use-work-orders";
+import { useTeams } from "@/hooks/use-teams";
 import { WorkOrdersTab } from "@/components/job-tabs/WorkOrdersTab";
 import { Button } from "@/components/ui/button";
 import { formatQueryError } from "@/lib/utils";
+import { workOrderTypeFilterOptions } from "@/lib/work-order-types-ui";
 
-const filterConfigs: FilterConfig[] = [
-  { key: "status", label: "Status", options: [
-    { value: "pending", label: "Na čekanju" }, { value: "in_progress", label: "U toku" },
-    { value: "completed", label: "Završen" }, { value: "canceled", label: "Otkazan" },
-  ]},
-  { key: "type", label: "Tip naloga", options: [
-    { value: "measurement", label: "Merenje" },
-    { value: "measurement_verification", label: "Provera mera" },
-    { value: "installation", label: "Ugradnja" },
-    { value: "production", label: "Proizvodnja" },
-    { value: "complaint", label: "Reklamacija" },
-    { value: "service", label: "Servis" },
-    { value: "site_visit", label: "Terenska poseta" },
-    { value: "control_visit", label: "Kontrolna poseta" },
-  ]},
-  {
-    key: "team", label: "Tim", options: [
-      { value: "t1", label: "Tim Alfa" }, { value: "t2", label: "Tim Beta" },
-      { value: "t3", label: "Proizvodnja" },
-    ]
-  },
-];
+const TEAM_FILTER_UNASSIGNED = "unassigned";
 
 export default function WorkOrdersPage() {
   const { workOrders, isLoading, isError, error } = useWorkOrders();
+  const { teams } = useTeams();
   const [filters, setFilters] = useState<Record<string, string>>({ status: "all", type: "all", team: "all" });
+
+  const filterConfigs = useMemo((): FilterConfig[] => {
+    const teamOptions = [
+      { value: TEAM_FILTER_UNASSIGNED, label: "Neraspoređeno" },
+      ...(teams ?? [])
+        .filter((t) => t.active)
+        .sort((a, b) => a.name.localeCompare(b.name, "sr"))
+        .map((t) => ({ value: t.id, label: t.name })),
+    ];
+    return [
+      {
+        key: "status",
+        label: "Status",
+        options: [
+          { value: "pending", label: "Na čekanju" },
+          { value: "in_progress", label: "U toku" },
+          { value: "completed", label: "Završen" },
+          { value: "canceled", label: "Otkazan" },
+        ],
+      },
+      {
+        key: "type",
+        label: "Tip naloga",
+        options: workOrderTypeFilterOptions(),
+      },
+      { key: "team", label: "Tim", options: teamOptions },
+    ];
+  }, [teams]);
 
   if (isError) {
     return (
@@ -56,10 +66,15 @@ export default function WorkOrdersPage() {
 
   if (isLoading) return <AppLayout><CardListSkeleton count={5} /></AppLayout>;
 
-  const filtered = (workOrders || []).filter(w => {
+  const filtered = (workOrders || []).filter((w) => {
     const matchStatus = filters.status === "all" || w.status === filters.status;
     const matchType = filters.type === "all" || w.type === filters.type;
-    const matchTeam = filters.team === "all" || w.assignedTeamId === filters.team;
+    const matchTeam =
+      filters.team === "all"
+        ? true
+        : filters.team === TEAM_FILTER_UNASSIGNED
+          ? !w.assignedTeamId
+          : w.assignedTeamId === filters.team;
     return matchStatus && matchType && matchTeam;
   });
 
