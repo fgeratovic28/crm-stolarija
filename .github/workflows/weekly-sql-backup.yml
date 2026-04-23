@@ -23,7 +23,17 @@ jobs:
             exit 1
           fi
 
-          echo "Calling backup function..."
+          # Trim whitespace/newlines that are often pasted into GitHub secrets.
+          BACKUP_URL="$(echo "$BACKUP_URL" | tr -d '\r\n' | xargs)"
+          CRON_SECRET="$(echo "$CRON_SECRET" | tr -d '\r\n' | xargs)"
+
+          if ! echo "$BACKUP_URL" | grep -Eq '^https?://'; then
+            echo "Invalid SUPABASE_BACKUP_FUNCTION_URL: must start with http:// or https://"
+            echo "Current value: '$BACKUP_URL'"
+            exit 1
+          fi
+
+          echo "Calling backup function: $BACKUP_URL"
           response=$(curl -sS -w "\n%{http_code}" \
             -X POST "$BACKUP_URL" \
             -H "Authorization: Bearer $CRON_SECRET" \
