@@ -1,4 +1,5 @@
 import { useState } from "react";
+import { useQueryClient } from "@tanstack/react-query";
 import { useNavigate } from "react-router-dom";
 import { ClipboardList, XCircle, FileDown, Plus, Pencil, FileText, MapPin, Info, UserPlus } from "lucide-react";
 import { GenericBadge } from "@/components/shared/StatusBadge";
@@ -23,6 +24,7 @@ import type { WorkOrder, FieldReport } from "@/types";
 import { fieldReportFlowForWorkOrderType, isFieldExecutionRole } from "@/lib/field-team-access";
 import { useAuthStore } from "@/stores/auth-store";
 import { labelWorkOrderType } from "@/lib/activity-labels";
+import { formatDateByAppLanguage, formatDateTimeBySettings } from "@/lib/app-settings";
 
 const statusVariant: Record<string, "success" | "warning" | "info" | "muted"> = {
   completed: "success", in_progress: "info", pending: "warning", canceled: "muted",
@@ -38,8 +40,9 @@ type WorkOrdersTabProps = {
 };
 
 export function WorkOrdersTab({ jobId, workOrders }: WorkOrdersTabProps) {
+  const queryClient = useQueryClient();
   const { workOrders: orders, isLoading, createWorkOrder, updateWorkOrder } = useWorkOrders(jobId);
-  const { fieldReports } = useJobRelatedData(jobId);
+  const { fieldReports, quotes } = useJobRelatedData(jobId);
   const { teams } = useTeams();
   const navigate = useNavigate();
   const { canPerformAction } = useRole();
@@ -73,8 +76,16 @@ export function WorkOrdersTab({ jobId, workOrders }: WorkOrdersTabProps) {
   const [assignTeamId, setAssignTeamId] = useState("");
 
   const handleCancel = (order: WorkOrder) => {
-    updateWorkOrder.mutate({ ...order, status: "canceled" });
-    toast.success("Radni nalog otkazan");
+    updateWorkOrder.mutate(
+      { ...order, status: "canceled" },
+      {
+        onSuccess: () => toast.success("Radni nalog otkazan"),
+        onError: (err) => {
+          const message = err instanceof Error ? err.message : "Otkaživanje nije uspelo.";
+          toast.error(message);
+        },
+      },
+    );
   };
 
   const handleReportAction = (orderId: string) => {
@@ -108,6 +119,8 @@ export function WorkOrdersTab({ jobId, workOrders }: WorkOrdersTabProps) {
   };
 
   const visibleOrders = workOrders ?? orders ?? [];
+  const acceptedFinalQuote = (quotes ?? []).find((q) => q.status === "accepted" && q.isFinalOffer);
+  const installationScopeLines = acceptedFinalQuote?.lines ?? [];
   const activeOwnTeamOrder = visibleOrders.find(
     (order) =>
       !!user?.teamId &&
@@ -239,16 +252,57 @@ export function WorkOrdersTab({ jobId, workOrders }: WorkOrdersTabProps) {
                           {team?.name || (o.assignedTeamId ? "—" : "Neraspoređeno")}
                         </span>
                       </span>
-                      <span>Datum: <span className="text-foreground font-medium">{o.date}</span></span>
+                      <span>
+                        Kreiran:{" "}
+                        <span className="text-foreground font-medium">
+                          {o.createdAt ? formatDateTimeBySettings(o.createdAt) : "—"}
+                        </span>
+                      </span>
+                      <span>
+                        Zakazan:{" "}
+                        <span className="text-foreground font-medium">
+                          {formatDateByAppLanguage(o.date) || o.date}
+                        </span>
+                      </span>
                       {o.productionRef && <span>Proiz: <span className="font-medium">{o.productionRef}</span></span>}
                       {o.installationRef && <span>Ugr: <span className="font-medium">{o.installationRef}</span></span>}
                     </div>
+                    {o.type === "installation" && installationScopeLines.length > 0 && (
+                      <div className="mt-2 rounded-lg border border-border bg-muted/20 p-2.5">
+                        <p className="text-[11px] font-semibold uppercase tracking-wide text-muted-foreground mb-1">
+                          Stavke finalne ponude (bez cena)
+                        </p>
+                        <ul className="space-y-1">
+                          {installationScopeLines.map((line) => (
+                            <li key={line.id} className="text-xs text-foreground">
+                              {line.description} · količina {line.quantity}
+                            </li>
+                          ))}
+                        </ul>
+                      </div>
+                    )}
                   </div>
                   <div className="flex gap-1 shrink-0">
                     <Button variant="ghost" size="sm" className="text-muted-foreground hover:text-primary" onClick={() => handleViewOrder(o)}>
                       <Info className="w-4 h-4 mr-1" /> Detalji
                     </Button>
-                    <Button variant="ghost" size="sm" className="text-muted-foreground hover:text-primary" onClick={() => void exportWorkOrderPDF(o)}>
+                    <Button
+                      variant="ghost"
+                      size="sm"
+                      className="text-muted-foreground hover:text-primary"
+                      onClick={() =>
+                        void exportWorkOrderPDF(o, {
+                          attachGeneratedPdf: !!user?.id && !!jobId,
+                          userId: user?.id,
+                          onPdfAttached: (r) => {
+                            if (jobId) queryClient.invalidateQueries({ queryKey: ["files", jobId] });
+                            toast.success(r === "updated" ? "PDF je ažuriran u Fajlovima" : "PDF je sačuvan u Fajlovima");
+                          },
+                          onPdfAttachFailed: (m) =>
+                            toast.error("Štampa je otvorena, ali PDF nije sačuvan", { description: m }),
+                        })
+                      }
+                    >
                       <FileDown className="w-4 h-4 mr-1" /> PDF
                     </Button>
                     {canQuickAssignTeam(o) && (

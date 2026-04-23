@@ -337,29 +337,6 @@ export default function UsersPage() {
           </div>
         </div>
 
-        <h2 className="font-semibold text-foreground mb-4 text-sm uppercase tracking-wider">Matrica dozvola po ulogama</h2>
-        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3">
-          {(Object.keys(ROLE_CONFIG) as UserRole[]).map(role => {
-            const config = ROLE_CONFIG[role];
-            return (
-              <div key={role} className={`bg-card rounded-xl border p-4 sm:p-5 transition-all ${role === currentRole ? "border-primary ring-2 ring-primary/20 shadow-sm" : "border-border"}`}>
-                <div className="flex items-center justify-between mb-1">
-                  <h3 className="font-semibold text-foreground text-sm">{config.label}</h3>
-                  {role === currentRole && <GenericBadge label="Vaša uloga" variant="info" />}
-                </div>
-                <p className="text-xs text-muted-foreground mb-3 leading-relaxed">{config.description}</p>
-                <ul className="space-y-1.5">
-                  {config.access.map(a => (
-                    <li key={a} className="flex items-center gap-2 text-xs text-foreground">
-                      <Check className="w-3 h-3 text-success shrink-0" /> {a}
-                    </li>
-                  ))}
-                </ul>
-              </div>
-            );
-          })}
-        </div>
-
         <Dialog open={nameDialogOpen} onOpenChange={setNameDialogOpen}>
           <DialogContent className="w-full sm:max-w-md">
             <DialogHeader>

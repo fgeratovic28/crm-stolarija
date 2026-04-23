@@ -17,14 +17,14 @@ export function useWorkOrders(jobId?: string) {
   const runStatusAutomation = async (targetJobId?: string) => {
     if (!targetJobId) return;
     try {
-      await recomputeJobStatus(targetJobId, user?.id ?? null);
-    } catch (err) {
-      console.warn("Auto status recompute failed after work order change:", err);
-    }
-    try {
       await ensureWorkflowWorkOrders(targetJobId);
     } catch (err) {
       console.warn("ensureWorkflowWorkOrders posle promene RN:", err);
+    }
+    try {
+      await recomputeJobStatus(targetJobId, user?.id ?? null);
+    } catch (err) {
+      console.warn("Auto status recompute failed after work order change:", err);
     }
   };
 
@@ -68,6 +68,7 @@ export function useWorkOrders(jobId?: string) {
         attachmentName: d.file_id ? "attachment" : undefined,
         installationRef: (d as { installation_ref?: string | null }).installation_ref ?? undefined,
         productionRef: (d as { production_ref?: string | null }).production_ref ?? undefined,
+        createdAt: (d as { created_at?: string }).created_at,
         job: d.jobs
           ? {
               id: d.jobs.id,
@@ -129,6 +130,21 @@ export function useWorkOrders(jobId?: string) {
       const prev = await supabase.from("work_orders").select("status").eq("id", order.id).single();
       if (prev.error) throw prev.error;
       const previousStatus = prev.data?.status as string | undefined;
+
+      // Proizvodni nalog se ne zatvara ručno dok svi barkodovi nisu skenirani.
+      if (order.type === "production" && order.status === "completed") {
+        const { data: pendingItems, error: itemsErr } = await supabase
+          .from("job_items")
+          .select("id")
+          .eq("job_id", order.jobId)
+          .eq("is_completed", false)
+          .limit(1);
+        if (itemsErr) throw itemsErr;
+        if ((pendingItems ?? []).length > 0) {
+          throw new Error("Proizvodni nalog ne može biti završen dok svi bar kodovi ne budu skenirani.");
+        }
+      }
+
       const { error } = await supabase
         .from("work_orders")
         .update({

@@ -21,13 +21,18 @@ export function isTerenRole(role: UserRole | null | undefined): boolean {
   return role === "teren";
 }
 
+export function isProductionRole(role: UserRole | null | undefined): boolean {
+  return role === "production";
+}
+
 export function isFieldExecutionRole(role: UserRole | null | undefined): boolean {
-  return isMontazaRole(role) || isTerenRole(role);
+  return isMontazaRole(role) || isTerenRole(role) || isProductionRole(role);
 }
 
 export function workOrderTypesForRole(role: UserRole | null | undefined): WorkOrderType[] {
   if (isMontazaRole(role)) return [...MONTAZA_WORK_ORDER_TYPES];
   if (isTerenRole(role)) return [...TEREN_WORK_ORDER_TYPES];
+  if (isProductionRole(role)) return ["production"];
   return [];
 }
 

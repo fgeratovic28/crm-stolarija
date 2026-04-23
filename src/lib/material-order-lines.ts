@@ -17,6 +17,13 @@ export function parseNbLinesJson(raw: unknown): MaterialOrderLine[] | undefined 
     const unit = String(o.unit ?? "kom").trim() || "kom";
     const lineNet = roundMoney(Number(o.lineNet ?? o.line_net ?? 0));
     const materialType = o.materialType as MaterialOrderLine["materialType"] | undefined;
+    const rawSourceIds = o.sourceJobItemIds;
+    const sourceJobItemIds = Array.isArray(rawSourceIds)
+      ? rawSourceIds.filter((id): id is string => typeof id === "string" && id.length > 0)
+      : undefined;
+    const orderedQtyRaw = o.orderedQuantity;
+    const orderedQuantity =
+      orderedQtyRaw != null && Number.isFinite(Number(orderedQtyRaw)) ? Number(orderedQtyRaw) : undefined;
     if (!description && lineNet <= 0) continue;
     lines.push({
       description: description || "—",
@@ -24,6 +31,8 @@ export function parseNbLinesJson(raw: unknown): MaterialOrderLine[] | undefined 
       unit,
       lineNet,
       ...(materialType ? { materialType } : {}),
+      ...(sourceJobItemIds && sourceJobItemIds.length > 0 ? { sourceJobItemIds } : {}),
+      ...(orderedQuantity != null ? { orderedQuantity } : {}),
     });
   }
   return lines.length > 0 ? lines : undefined;
@@ -41,6 +50,10 @@ export function normalizeOrderLines(order: MaterialOrder): MaterialOrderLine[] {
       unit: (l.unit ?? "kom").trim() || "kom",
       lineNet: roundMoney(Number(l.lineNet) || 0),
       ...(l.materialType ? { materialType: l.materialType } : {}),
+      ...(l.sourceJobItemIds && l.sourceJobItemIds.length > 0 ? { sourceJobItemIds: l.sourceJobItemIds } : {}),
+      ...(l.orderedQuantity != null && Number.isFinite(l.orderedQuantity)
+        ? { orderedQuantity: l.orderedQuantity }
+        : {}),
     }));
   }
 
@@ -67,4 +80,11 @@ export function normalizeOrderLines(order: MaterialOrder): MaterialOrderLine[] {
 
 export function sumOrderLinesNet(lines: MaterialOrderLine[]): number {
   return roundMoney(lines.reduce((s, l) => s + (Number(l.lineNet) || 0), 0));
+}
+
+/** Porudžbina nastala iz krojne liste / brze nabavke profila (za prikaz na tabu Materijal na poslu). */
+export function orderIsFromCutListNabavka(order: MaterialOrder): boolean {
+  if (order.materialType === "profile") return true;
+  const lines = order.nbLines ?? [];
+  return lines.some((l) => Array.isArray(l.sourceJobItemIds) && l.sourceJobItemIds.length > 0);
 }

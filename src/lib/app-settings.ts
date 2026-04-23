@@ -1,3 +1,5 @@
+import { supabase } from "@/lib/supabase";
+
 export const APP_SETTINGS_CACHE_KEY = "app_settings_cache";
 
 export type AppSettingsCache = {
@@ -15,6 +17,15 @@ export type AppSettingsCache = {
   notifJobStatusChange: boolean;
   notifStaleJobStatus: boolean;
   jobStaleStatusDays: number;
+  /** Firma (naručilac) — porudžbenica, štampa. */
+  companyName: string;
+  companyPib: string;
+  companyMb: string;
+  companyAddress: string;
+  companyPhone: string;
+  companyEmail: string;
+  companyWebsite: string;
+  companyBankAccount: string;
 };
 
 const DEFAULT_SETTINGS_CACHE: AppSettingsCache = {
@@ -32,7 +43,37 @@ const DEFAULT_SETTINGS_CACHE: AppSettingsCache = {
   notifJobStatusChange: false,
   notifStaleJobStatus: true,
   jobStaleStatusDays: 7,
+  companyName: "",
+  companyPib: "",
+  companyMb: "",
+  companyAddress: "",
+  companyPhone: "",
+  companyEmail: "",
+  companyWebsite: "",
+  companyBankAccount: "",
 };
+
+function strField(v: unknown): string {
+  return typeof v === "string" ? v.trim() : "";
+}
+
+/** Spaja red `app_settings` u keš (naručilac / porudžbenica). */
+export function mergeCompanyRowIntoCache(
+  base: AppSettingsCache,
+  row: Record<string, unknown>,
+): AppSettingsCache {
+  return {
+    ...base,
+    companyName: strField(row.company_name) || base.companyName,
+    companyPib: strField(row.company_pib) || base.companyPib,
+    companyMb: strField(row.company_mb) || base.companyMb,
+    companyAddress: strField(row.company_address) || base.companyAddress,
+    companyPhone: strField(row.company_phone) || base.companyPhone,
+    companyEmail: strField(row.company_email) || base.companyEmail,
+    companyWebsite: strField(row.company_website) || base.companyWebsite,
+    companyBankAccount: strField(row.company_bank_account) || base.companyBankAccount,
+  };
+}
 
 export function readAppSettingsCache(): AppSettingsCache {
   if (typeof window === "undefined") return DEFAULT_SETTINGS_CACHE;
@@ -40,7 +81,7 @@ export function readAppSettingsCache(): AppSettingsCache {
     const raw = window.localStorage.getItem(APP_SETTINGS_CACHE_KEY);
     if (!raw) return DEFAULT_SETTINGS_CACHE;
     const parsed = JSON.parse(raw) as Partial<AppSettingsCache>;
-    return {
+    const base: AppSettingsCache = {
       language: parsed.language === "en" ? "en" : "sr",
       dateFormat:
         parsed.dateFormat === "dd/MM/yyyy" || parsed.dateFormat === "yyyy-MM-dd"
@@ -76,19 +117,103 @@ export function readAppSettingsCache(): AppSettingsCache {
         parsed.jobStaleStatusDays > 0
           ? Math.trunc(parsed.jobStaleStatusDays)
           : 7,
+      companyName: typeof parsed.companyName === "string" ? parsed.companyName : "",
+      companyPib: typeof parsed.companyPib === "string" ? parsed.companyPib : "",
+      companyMb: typeof parsed.companyMb === "string" ? parsed.companyMb : "",
+      companyAddress: typeof parsed.companyAddress === "string" ? parsed.companyAddress : "",
+      companyPhone: typeof parsed.companyPhone === "string" ? parsed.companyPhone : "",
+      companyEmail: typeof parsed.companyEmail === "string" ? parsed.companyEmail : "",
+      companyWebsite: typeof parsed.companyWebsite === "string" ? parsed.companyWebsite : "",
+      companyBankAccount: typeof parsed.companyBankAccount === "string" ? parsed.companyBankAccount : "",
     };
+    return base;
   } catch {
     return DEFAULT_SETTINGS_CACHE;
   }
 }
 
-export function writeAppSettingsCache(cache: AppSettingsCache): void {
+export function writeAppSettingsCache(patch: Partial<AppSettingsCache>): void {
   if (typeof window === "undefined") return;
   try {
-    window.localStorage.setItem(APP_SETTINGS_CACHE_KEY, JSON.stringify(cache));
+    const merged = { ...readAppSettingsCache(), ...patch };
+    window.localStorage.setItem(APP_SETTINGS_CACHE_KEY, JSON.stringify(merged));
     window.dispatchEvent(new Event("app-settings-updated"));
   } catch {
     // ignore write failures
+  }
+}
+
+const APP_SETTINGS_ROW_ID = 1;
+
+/** Učitava firmu i ostala podešavanja u localStorage (nakon prijave). */
+export async function syncAppSettingsCacheFromSupabase(): Promise<void> {
+  if (typeof window === "undefined") return;
+  try {
+    const { data, error } = await supabase
+      .from("app_settings")
+      .select(
+        `
+        company_name,
+        company_pib,
+        company_mb,
+        company_address,
+        company_phone,
+        company_email,
+        company_website,
+        company_bank_account,
+        language,
+        date_format,
+        timezone,
+        currency,
+        overdue_days,
+        customer_prefix,
+        job_prefix,
+        notif_overdue_payments,
+        notif_late_deliveries,
+        notif_upcoming_installs,
+        notif_new_complaints,
+        notif_job_status_change,
+        notif_stale_job_status,
+        job_stale_status_days
+      `,
+      )
+      .eq("id", APP_SETTINGS_ROW_ID)
+      .maybeSingle();
+
+    if (error || !data) return;
+
+    const row = data as Record<string, unknown>;
+    const cur = readAppSettingsCache();
+    writeAppSettingsCache({
+      ...mergeCompanyRowIntoCache(cur, row),
+      language: row.language === "en" ? "en" : "sr",
+      dateFormat:
+        row.date_format === "dd/MM/yyyy" || row.date_format === "yyyy-MM-dd"
+          ? (row.date_format as AppSettingsCache["dateFormat"])
+          : "dd.MM.yyyy",
+      timezone: strField(row.timezone) || cur.timezone,
+      currency: row.currency === "EUR" || row.currency === "USD" ? row.currency : "RSD",
+      overdueDays:
+        typeof row.overdue_days === "number" && Number.isFinite(row.overdue_days) && row.overdue_days > 0
+          ? Math.trunc(row.overdue_days as number)
+          : cur.overdueDays,
+      customerPrefix: strField(row.customer_prefix) || cur.customerPrefix,
+      jobPrefix: strField(row.job_prefix) || cur.jobPrefix,
+      notifOverduePayments: row.notif_overdue_payments !== false,
+      notifLateDeliveries: row.notif_late_deliveries !== false,
+      notifUpcomingInstalls: row.notif_upcoming_installs !== false,
+      notifNewComplaints: row.notif_new_complaints !== false,
+      notifJobStatusChange: row.notif_job_status_change === true,
+      notifStaleJobStatus: row.notif_stale_job_status !== false,
+      jobStaleStatusDays:
+        typeof row.job_stale_status_days === "number" &&
+        Number.isFinite(row.job_stale_status_days) &&
+        (row.job_stale_status_days as number) > 0
+          ? Math.trunc(row.job_stale_status_days as number)
+          : cur.jobStaleStatusDays,
+    });
+  } catch {
+    /* ignore */
   }
 }
 

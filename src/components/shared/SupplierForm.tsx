@@ -11,20 +11,9 @@ import {
   FormMessage,
 } from "@/components/ui/form";
 import { Input } from "@/components/ui/input";
+import { Textarea } from "@/components/ui/textarea";
 import { Checkbox } from "@/components/ui/checkbox";
-import type { Supplier, MaterialType } from "@/types";
-
-const MATERIAL_TYPES: { value: MaterialType; label: string }[] = [
-  { value: "glass", label: "Staklo" },
-  { value: "profile", label: "Profil" },
-  { value: "hardware", label: "Okov" },
-  { value: "shutters", label: "Roletne" },
-  { value: "mosquito_net", label: "Komarnici" },
-  { value: "sills", label: "Podprozorske daske" },
-  { value: "boards", label: "Opšivke" },
-  { value: "sealant", label: "Zaptivni materijal" },
-  { value: "other", label: "Ostalo" },
-];
+import type { Supplier } from "@/types";
 
 const supplierSchema = z.object({
   name: z.string().min(2, "Naziv mora imati barem 2 karaktera"),
@@ -32,8 +21,17 @@ const supplierSchema = z.object({
   phone: z.string().min(5, "Telefon je obavezan"),
   email: z.string().email("Neispravan email").or(z.literal("")),
   address: z.string().min(5, "Adresa je obavezna"),
-  materialTypes: z.array(z.string()).min(1, "Izaberite barem jednu vrstu materijala"),
   active: z.boolean().default(true),
+  bankAccount: z.string().optional().default(""),
+  pib: z.string().optional().default(""),
+  nbShippingMethod: z.string().optional().default(""),
+  nbPaymentDaysAfterOrder: z.preprocess(
+    (v) => (v === "" || v === undefined || v === null ? undefined : Number(String(v).replace(",", "."))),
+    z.number().int().min(1).max(3650).optional(),
+  ),
+  nbLegalReference: z.string().optional().default(""),
+  nbPaymentNote: z.string().optional().default(""),
+  nbDeliveryAddressOverride: z.string().optional().default(""),
 });
 
 export type SupplierFormValues = z.infer<typeof supplierSchema>;
@@ -54,8 +52,14 @@ export function SupplierForm({ initialData, onSubmit, onCancel, isLoading }: Sup
       phone: initialData?.phone || "",
       email: initialData?.email || "",
       address: initialData?.address || "",
-      materialTypes: initialData?.materialTypes || [],
       active: initialData?.active ?? true,
+      bankAccount: initialData?.bankAccount ?? "",
+      pib: initialData?.pib ?? "",
+      nbShippingMethod: initialData?.nbShippingMethod ?? "",
+      nbPaymentDaysAfterOrder: initialData?.nbPaymentDaysAfterOrder,
+      nbLegalReference: initialData?.nbLegalReference ?? "",
+      nbPaymentNote: initialData?.nbPaymentNote ?? "",
+      nbDeliveryAddressOverride: initialData?.nbDeliveryAddressOverride ?? "",
     },
   });
 
@@ -132,44 +136,114 @@ export function SupplierForm({ initialData, onSubmit, onCancel, isLoading }: Sup
           </div>
         </div>
 
-        <div className="space-y-3">
-          <FormLabel>Vrste materijala</FormLabel>
-          <div className="grid grid-cols-2 sm:grid-cols-3 gap-3">
-            {MATERIAL_TYPES.map((type) => (
-              <FormField
-                key={type.value}
-                control={form.control}
-                name="materialTypes"
-                render={({ field }) => {
-                  return (
-                    <FormItem
-                      key={type.value}
-                      className="flex flex-row items-start space-x-3 space-y-0 rounded-md border p-3"
-                    >
-                      <FormControl>
-                        <Checkbox
-                          checked={field.value?.includes(type.value)}
-                          onCheckedChange={(checked) => {
-                            return checked
-                              ? field.onChange([...field.value, type.value])
-                              : field.onChange(
-                                  field.value?.filter(
-                                    (value) => value !== type.value
-                                  )
-                                );
-                          }}
-                        />
-                      </FormControl>
-                      <FormLabel className="font-normal cursor-pointer">
-                        {type.label}
-                      </FormLabel>
-                    </FormItem>
-                  );
-                }}
-              />
-            ))}
+        <div className="md:col-span-2 space-y-3 rounded-lg border border-border bg-muted/30 p-4">
+          <div>
+            <h3 className="text-sm font-semibold text-foreground">Porudžbenica — podrazumevano</h3>
           </div>
-          <FormMessage />
+          <div className="grid grid-cols-1 gap-4 md:grid-cols-2 md:items-end">
+            <FormField
+              control={form.control}
+              name="bankAccount"
+              render={({ field }) => (
+                <FormItem className="md:col-span-2">
+                  <FormLabel>Žiro / tekući račun dobavljača</FormLabel>
+                  <FormControl>
+                    <Input placeholder="Za porudžbenicu (dobavljač)" {...field} value={field.value ?? ""} />
+                  </FormControl>
+                  <FormMessage />
+                </FormItem>
+              )}
+            />
+            <FormField
+              control={form.control}
+              name="pib"
+              render={({ field }) => (
+                <FormItem className="md:col-span-2">
+                  <FormLabel>PIB dobavljača</FormLabel>
+                  <FormControl>
+                    <Input placeholder="Opciono" {...field} value={field.value ?? ""} />
+                  </FormControl>
+                  <FormMessage />
+                </FormItem>
+              )}
+            />
+            <FormField
+              control={form.control}
+              name="nbShippingMethod"
+              render={({ field }) => (
+                <FormItem className="md:col-span-2">
+                  <FormLabel>Način otpreme / isporuke</FormLabel>
+                  <FormControl>
+                    <Input placeholder="npr. sopstveni prevoz, kurir…" {...field} value={field.value ?? ""} />
+                  </FormControl>
+                  <FormMessage />
+                </FormItem>
+              )}
+            />
+            <FormField
+              control={form.control}
+              name="nbPaymentDaysAfterOrder"
+              render={({ field }) => (
+                <FormItem>
+                  <FormLabel>Rok plaćanja (dana od datuma narudžbine)</FormLabel>
+                  <FormControl>
+                    <Input
+                      type="number"
+                      min={1}
+                      max={3650}
+                      placeholder="npr. 30 — prazno bez automatskog datuma"
+                      {...field}
+                      value={field.value === undefined || field.value === null ? "" : field.value}
+                      onChange={(e) => {
+                        const v = e.target.value;
+                        field.onChange(v === "" ? undefined : Number(v.replace(",", ".")));
+                      }}
+                    />
+                  </FormControl>
+                  <FormMessage />
+                </FormItem>
+              )}
+            />
+            <FormField
+              control={form.control}
+              name="nbLegalReference"
+              render={({ field }) => (
+                <FormItem>
+                  <FormLabel>Pravni osnov</FormLabel>
+                  <FormControl>
+                    <Input placeholder="npr. Ugovor br. …" {...field} value={field.value ?? ""} />
+                  </FormControl>
+                  <FormMessage />
+                </FormItem>
+              )}
+            />
+            <FormField
+              control={form.control}
+              name="nbPaymentNote"
+              render={({ field }) => (
+                <FormItem className="md:col-span-2">
+                  <FormLabel>Napomena o plaćanju</FormLabel>
+                  <FormControl>
+                    <Textarea placeholder="Dodatni uslovi plaćanja" rows={2} {...field} value={field.value ?? ""} />
+                  </FormControl>
+                  <FormMessage />
+                </FormItem>
+              )}
+            />
+            <FormField
+              control={form.control}
+              name="nbDeliveryAddressOverride"
+              render={({ field }) => (
+                <FormItem className="md:col-span-2">
+                  <FormLabel>Adresa isporuke (ako nije adresa naručioca iz Podešavanja)</FormLabel>
+                  <FormControl>
+                    <Textarea rows={2} {...field} value={field.value ?? ""} />
+                  </FormControl>
+                  <FormMessage />
+                </FormItem>
+              )}
+            />
+          </div>
         </div>
 
         <FormField

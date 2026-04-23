@@ -1,5 +1,5 @@
-import { useEffect, useMemo } from "react";
-import { useForm } from "react-hook-form";
+import { useEffect } from "react";
+import { useForm, useWatch } from "react-hook-form";
 import type { Control } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
 import { Button } from "@/components/ui/button";
@@ -23,10 +23,11 @@ import {
   type MaterialOrderFormValues,
   type NarudzbenicaFieldsValues,
   narudzbenicaDefaultsFromOrder,
+  narudzbenicaDefaultsFromSupplier,
   totalNetFromFormLines,
 } from "@/lib/material-order-form-schema";
+import { readAppSettingsCache } from "@/lib/app-settings";
 import { NarudzbenicaFields } from "@/components/shared/NarudzbenicaFields";
-import { lineMaterialOptionsForSupplier } from "@/lib/material-type-options";
 
 export type { MaterialOrderFormValues } from "@/lib/material-order-form-schema";
 
@@ -62,6 +63,7 @@ export function MaterialOrderForm({ jobId, initialData, onSubmit, onCancel, isLo
   const { data: jobs } = useJobsListSimple();
   const activeSuppliers = suppliers?.filter(s => s.active) || [];
   const hasFixedJob = Boolean(jobId);
+  const isEditOrder = Boolean(initialData?.id);
 
   const nbBlock =
     initialData?.id != null
@@ -73,7 +75,7 @@ export function MaterialOrderForm({ jobId, initialData, onSubmit, onCancel, isLo
   const resolvedInitialMaterialType =
     (initialMaterialTypeFromLines as MaterialType | undefined) ||
     initialData?.materialType ||
-    "other";
+    "profile";
 
   const form = useForm<MaterialOrderFormValues>({
     resolver: zodResolver(orderSchema),
@@ -98,14 +100,9 @@ export function MaterialOrderForm({ jobId, initialData, onSubmit, onCancel, isLo
     },
   });
 
-  const selectedSupplierId = form.watch("supplierId");
-  const selectedSupplier = suppliers?.find(s => s.id === selectedSupplierId);
   const nbLinesWatch = form.watch("nbLines");
-
-  const lineMaterialTypeOptions = useMemo(
-    () => lineMaterialOptionsForSupplier(selectedSupplier),
-    [selectedSupplier],
-  );
+  const supplierIdWatch = useWatch({ control: form.control, name: "supplierId" });
+  const requestDateWatch = useWatch({ control: form.control, name: "requestDate" });
 
   useEffect(() => {
     const lines = nbLinesWatch ?? [];
@@ -114,27 +111,20 @@ export function MaterialOrderForm({ jobId, initialData, onSubmit, onCancel, isLo
   }, [nbLinesWatch, form]);
 
   useEffect(() => {
-    const allowed = new Set(lineMaterialTypeOptions.map((o) => o.value));
-    const lines = form.getValues("nbLines") ?? [];
-    let changed = false;
-    const next = lines.map((l) => {
-      const mt = l.materialType as MaterialType | undefined;
-      if (mt && !allowed.has(mt)) {
-        changed = true;
-        return { ...l, materialType: undefined };
-      }
-      return l;
-    });
-    if (changed) form.setValue("nbLines", next, { shouldValidate: true });
-  }, [selectedSupplierId, lineMaterialTypeOptions, form]);
-
-  useEffect(() => {
-    const lines = nbLinesWatch ?? [];
-    const fromLine = lines.find((l) => l.materialType)?.materialType as MaterialType | undefined;
-    form.setValue("materialType", fromLine ?? "other", { shouldValidate: true, shouldDirty: false });
-  }, [nbLinesWatch, form]);
+    if (isEditOrder || !supplierIdWatch) return;
+    const sup = suppliers?.find((s) => s.id === supplierIdWatch);
+    if (!sup) return;
+    const req = requestDateWatch || new Date().toISOString().split("T")[0];
+    const d = narudzbenicaDefaultsFromSupplier(sup, req);
+    form.setValue("nbShippingMethod", d.nbShippingMethod, { shouldDirty: true });
+    form.setValue("nbPaymentDueDate", d.nbPaymentDueDate, { shouldDirty: true });
+    form.setValue("nbPaymentNote", d.nbPaymentNote, { shouldDirty: true });
+    form.setValue("nbLegalReference", d.nbLegalReference, { shouldDirty: true });
+    form.setValue("nbDeliveryAddressOverride", d.nbDeliveryAddressOverride, { shouldDirty: true });
+  }, [isEditOrder, supplierIdWatch, requestDateWatch, suppliers, form]);
 
   const handleInternalSubmit = (data: MaterialOrderFormValues) => {
+    const selectedSupplier = suppliers?.find((s) => s.id === data.supplierId);
     const total = totalNetFromFormLines(data.nbLines);
     const nbLinesOut: MaterialOrderLine[] = data.nbLines.map((l) => ({
       description: l.description.trim(),
@@ -145,18 +135,20 @@ export function MaterialOrderForm({ jobId, initialData, onSubmit, onCancel, isLo
         ? { materialType: l.materialType as MaterialType }
         : {}),
     }));
-    const primaryMaterial =
-      (data.nbLines.find((l) => l.materialType)?.materialType as MaterialType | undefined) ?? "other";
+    const primaryMaterial = (data.materialType as MaterialType) || "profile";
+    const companyBank = readAppSettingsCache().companyBankAccount?.trim();
     const submissionData = {
       ...data,
       materialType: primaryMaterial,
       price: total,
       supplier: selectedSupplier?.name || "",
       supplierContact: selectedSupplier?.contactPerson || selectedSupplier?.phone || "",
+      supplierAddress: selectedSupplier?.address || undefined,
       orderDate: data.requestDate,
       supplierPrice: total,
       quantityVerified: data.deliveryVerified,
       nbLines: nbLinesOut,
+      nbBuyerBankAccount: companyBank || data.nbBuyerBankAccount?.trim() || undefined,
     };
     onSubmit(submissionData);
   };
@@ -334,7 +326,7 @@ export function MaterialOrderForm({ jobId, initialData, onSubmit, onCancel, isLo
           <div>
             <h3 className="text-sm font-semibold text-foreground">Porudžbenica (štampa i javni link)</h3>
             <p className="text-xs text-muted-foreground mt-1">
-              Stavke (materijal po šifarniku dobavljača), PDV, plaćanje i adrese idu na dokument. Ukupno se računa iz stavki.
+              Podaci naručioca i žiro račun dolaze iz Podešavanja → Firma. Otpremu, plaćanje i adresu isporuke podešavate na dobavljaču. Ukupno se računa iz stavki.
             </p>
           </div>
 
@@ -368,7 +360,7 @@ export function MaterialOrderForm({ jobId, initialData, onSubmit, onCancel, isLo
             />
           </div>
 
-          <NarudzbenicaFields control={nbControl} lineMaterialTypeOptions={lineMaterialTypeOptions} />
+          <NarudzbenicaFields control={nbControl} />
         </section>
 
         <div className="flex flex-col-reverse gap-2 border-t border-border pt-4 sm:flex-row sm:justify-end sm:gap-3 [&>button]:w-full sm:[&>button]:w-auto">

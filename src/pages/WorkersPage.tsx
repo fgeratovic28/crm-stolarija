@@ -16,10 +16,14 @@ import { Textarea } from "@/components/ui/textarea";
 import { Button } from "@/components/ui/button";
 import { Label } from "@/components/ui/label";
 import { Switch } from "@/components/ui/switch";
+import { Checkbox } from "@/components/ui/checkbox";
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
+import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
+import { Command, CommandEmpty, CommandGroup, CommandInput, CommandItem, CommandList } from "@/components/ui/command";
 import { ROLE_CONFIG, type UserRole } from "@/types";
+import { cn } from "@/lib/utils";
 
 type WorkerFormState = {
   userId: string;
@@ -32,12 +36,21 @@ type WorkerFormState = {
 
 type SickLeaveFormState = {
   workerId: string;
-  reason: string;
+  reasons: string[];
+  otherReason: string;
   startDate: string;
   endDate: string;
   daysCount: string;
   note: string;
 };
+
+const ABSENCE_REASON_OPTIONS = [
+  { value: "bolovanje", label: "Bolovanje" },
+  { value: "slava", label: "Slava" },
+  { value: "odmor", label: "Odmor" },
+  { value: "privatni_poslovi", label: "Privatni poslovi" },
+  { value: "ostalo", label: "Ostalo" },
+] as const;
 
 const emptyWorkerForm: WorkerFormState = {
   userId: "",
@@ -50,12 +63,51 @@ const emptyWorkerForm: WorkerFormState = {
 
 const emptySickLeaveForm: SickLeaveFormState = {
   workerId: "",
-  reason: "",
+  reasons: [],
+  otherReason: "",
   startDate: "",
   endDate: "",
   daysCount: "",
   note: "",
 };
+
+function parseStoredAbsenceReason(reason: string): { reasons: string[]; otherReason: string } {
+  const tokens = reason
+    .split(",")
+    .map((part) => part.trim().toLowerCase())
+    .filter(Boolean);
+  const reasons: string[] = [];
+  let otherReason = "";
+  for (const token of tokens) {
+    if (ABSENCE_REASON_OPTIONS.some((opt) => opt.value === token)) {
+      reasons.push(token);
+      continue;
+    }
+    if (token.startsWith("ostalo:")) {
+      reasons.push("ostalo");
+      otherReason = token.replace(/^ostalo:\s*/i, "").trim();
+    }
+  }
+  if (reasons.length === 0) {
+    reasons.push("ostalo");
+    otherReason = reason;
+  }
+  return {
+    reasons: Array.from(new Set(reasons)),
+    otherReason,
+  };
+}
+
+function formatAbsenceReasonDisplay(reason: string): string {
+  const { reasons, otherReason } = parseStoredAbsenceReason(reason);
+  const labels = reasons.map((value) => {
+    const option = ABSENCE_REASON_OPTIONS.find((opt) => opt.value === value);
+    if (!option) return value;
+    if (value === "ostalo" && otherReason) return `Ostalo: ${otherReason}`;
+    return option.label;
+  });
+  return labels.join(", ");
+}
 
 function toDisplayName(fullName: string | undefined, rawName: string | undefined, email: string | undefined): string {
   const source = (fullName && fullName.trim().length > 0 ? fullName : rawName && rawName.trim().length > 0 ? rawName : email?.split("@")[0] ?? "").trim();
@@ -96,10 +148,15 @@ export default function WorkersPage() {
   const [query, setQuery] = useState("");
   const [workerFormOpen, setWorkerFormOpen] = useState(false);
   const [sickLeaveFormOpen, setSickLeaveFormOpen] = useState(false);
+  const [sickLeaveWorkerSelectOpen, setSickLeaveWorkerSelectOpen] = useState(false);
+  const [sickLeaveWorkerSearch, setSickLeaveWorkerSearch] = useState("");
   const [editingWorker, setEditingWorker] = useState<Worker | null>(null);
   const [editingSickLeave, setEditingSickLeave] = useState<WorkerSickLeave | null>(null);
   const [workerForm, setWorkerForm] = useState<WorkerFormState>(emptyWorkerForm);
   const [sickLeaveForm, setSickLeaveForm] = useState<SickLeaveFormState>(emptySickLeaveForm);
+  const [absenceQuery, setAbsenceQuery] = useState("");
+  const [absenceWorkerFilter, setAbsenceWorkerFilter] = useState("all");
+  const [absenceReasonFilter, setAbsenceReasonFilter] = useState("all");
 
   const workerMap = useMemo(() => new Map(workers.map((w) => [w.id, w.fullName])), [workers]);
   const userMap = useMemo(() => new Map((users ?? []).map((u) => [u.id, u])), [users]);
@@ -124,6 +181,33 @@ export default function WorkersPage() {
 
   const canEditWorkers = canPerformAction("create_worker") || canPerformAction("edit_worker");
   const canManageSickLeaves = canPerformAction("manage_worker_sick_leave");
+
+  const filteredWorkersForSickLeaveSelect = useMemo(() => {
+    const q = sickLeaveWorkerSearch.trim().toLowerCase();
+    if (!q) return workers;
+    return workers.filter((w) =>
+      [w.fullName, w.position ?? "", w.phone ?? "", w.notes ?? ""].join(" ").toLowerCase().includes(q),
+    );
+  }, [workers, sickLeaveWorkerSearch]);
+
+  const filteredSickLeaves = useMemo(() => {
+    const q = absenceQuery.trim().toLowerCase();
+    return sickLeaves.filter((leave) => {
+      if (absenceWorkerFilter !== "all" && leave.workerId !== absenceWorkerFilter) return false;
+      if (absenceReasonFilter !== "all") {
+        const normalizedReason = leave.reason.toLowerCase();
+        if (absenceReasonFilter === "ostalo") {
+          if (!normalizedReason.includes("ostalo")) return false;
+        } else {
+          if (!normalizedReason.includes(absenceReasonFilter.toLowerCase())) return false;
+        }
+      }
+      if (!q) return true;
+      const workerName = (workerMap.get(leave.workerId) ?? "").toLowerCase();
+      const haystack = `${workerName} ${leave.reason} ${leave.note ?? ""}`.toLowerCase();
+      return haystack.includes(q);
+    });
+  }, [sickLeaves, absenceWorkerFilter, absenceReasonFilter, absenceQuery, workerMap]);
 
   const openCreateWorker = () => {
     setEditingWorker(null);
@@ -166,32 +250,46 @@ export default function WorkersPage() {
   const openCreateSickLeave = () => {
     setEditingSickLeave(null);
     setSickLeaveForm(emptySickLeaveForm);
+    setSickLeaveWorkerSearch("");
+    setSickLeaveWorkerSelectOpen(false);
     setSickLeaveFormOpen(true);
   };
 
   const openEditSickLeave = (leave: WorkerSickLeave) => {
+    const parsedReason = parseStoredAbsenceReason(leave.reason);
     setEditingSickLeave(leave);
     setSickLeaveForm({
       workerId: leave.workerId,
-      reason: leave.reason,
+      reasons: parsedReason.reasons,
+      otherReason: parsedReason.otherReason,
       startDate: leave.startDate ?? "",
       endDate: leave.endDate ?? "",
       daysCount: leave.daysCount ? String(leave.daysCount) : "",
       note: leave.note ?? "",
     });
+    setSickLeaveWorkerSearch("");
+    setSickLeaveWorkerSelectOpen(false);
     setSickLeaveFormOpen(true);
   };
 
   const submitSickLeave = () => {
+    const reasons = Array.from(new Set(sickLeaveForm.reasons));
+    const includeOther = reasons.includes("ostalo");
+    const otherText = sickLeaveForm.otherReason.trim();
+    if (reasons.length === 0) return;
+    if (includeOther && !otherText) return;
+    const reasonText = reasons
+      .map((reason) => (reason === "ostalo" ? `ostalo: ${otherText}` : reason))
+      .join(", ");
     const payload = {
       workerId: sickLeaveForm.workerId,
-      reason: sickLeaveForm.reason.trim(),
+      reason: reasonText,
       startDate: toNullable(sickLeaveForm.startDate),
       endDate: toNullable(sickLeaveForm.endDate),
       daysCount: sickLeaveForm.daysCount ? Number(sickLeaveForm.daysCount) : null,
       note: toNullable(sickLeaveForm.note),
     };
-    if (!payload.workerId || !payload.reason) return;
+    if (!payload.workerId) return;
     if (!payload.daysCount && !(payload.startDate && payload.endDate)) return;
 
     if (editingSickLeave) {
@@ -294,15 +392,57 @@ export default function WorkersPage() {
         <div className="bg-card rounded-xl border border-border overflow-hidden">
           <div className="p-4 sm:p-5 border-b border-border flex items-center justify-between">
             <div>
-              <h2 className="font-semibold text-sm">Bolovanja</h2>
+              <h2 className="font-semibold text-sm">Odsustva radnika</h2>
               <p className="text-xs text-muted-foreground mt-1">Razlog, trajanje (od-do ili broj dana) i napomena.</p>
             </div>
             {canManageSickLeaves && (
               <Button onClick={openCreateSickLeave}>
                 <HeartPulse className="w-4 h-4 mr-1.5" />
-                Novo bolovanje
+                Novo odsustvo
               </Button>
             )}
+          </div>
+          <div className="p-4 sm:p-5 border-b border-border grid grid-cols-1 md:grid-cols-3 gap-3">
+            <div>
+              <Label className="text-xs text-muted-foreground">Pretraga</Label>
+              <Input
+                placeholder="Radnik, razlog ili napomena..."
+                value={absenceQuery}
+                onChange={(e) => setAbsenceQuery(e.target.value)}
+              />
+            </div>
+            <div>
+              <Label className="text-xs text-muted-foreground">Radnik</Label>
+              <Select value={absenceWorkerFilter} onValueChange={setAbsenceWorkerFilter}>
+                <SelectTrigger>
+                  <SelectValue placeholder="Svi radnici" />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="all">Svi radnici</SelectItem>
+                  {workers.map((w) => (
+                    <SelectItem key={w.id} value={w.id}>
+                      {w.fullName}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            </div>
+            <div>
+              <Label className="text-xs text-muted-foreground">Razlog</Label>
+              <Select value={absenceReasonFilter} onValueChange={setAbsenceReasonFilter}>
+                <SelectTrigger>
+                  <SelectValue placeholder="Svi razlozi" />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="all">Svi razlozi</SelectItem>
+                  {ABSENCE_REASON_OPTIONS.map((reason) => (
+                    <SelectItem key={reason.value} value={reason.value}>
+                      {reason.label}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            </div>
           </div>
           <Table>
             <TableHeader>
@@ -316,17 +456,17 @@ export default function WorkersPage() {
               </TableRow>
             </TableHeader>
             <TableBody>
-              {sickLeaves.length === 0 ? (
+              {filteredSickLeaves.length === 0 ? (
                 <TableRow>
                   <TableCell colSpan={6} className="text-center text-muted-foreground py-8">
-                    Nema unosa bolovanja.
+                    Nema unosa odsustva.
                   </TableCell>
                 </TableRow>
               ) : (
-                sickLeaves.map((leave) => (
+                filteredSickLeaves.map((leave) => (
                   <TableRow key={leave.id}>
                     <TableCell>{workerMap.get(leave.workerId) ?? "-"}</TableCell>
-                    <TableCell>{leave.reason}</TableCell>
+                    <TableCell>{formatAbsenceReasonDisplay(leave.reason)}</TableCell>
                     <TableCell>{leave.startDate && leave.endDate ? `${leave.startDate} - ${leave.endDate}` : "-"}</TableCell>
                     <TableCell>{leave.daysCount ?? "-"}</TableCell>
                     <TableCell className="max-w-xs truncate">{leave.note || "-"}</TableCell>
@@ -442,27 +582,87 @@ export default function WorkersPage() {
         <Dialog open={sickLeaveFormOpen} onOpenChange={setSickLeaveFormOpen}>
           <DialogContent className="w-full sm:max-w-lg">
             <DialogHeader>
-              <DialogTitle>{editingSickLeave ? "Izmena bolovanja" : "Novo bolovanje"}</DialogTitle>
+              <DialogTitle>{editingSickLeave ? "Izmena odsustva" : "Novo odsustvo"}</DialogTitle>
             </DialogHeader>
             <div className="space-y-3">
               <div>
                 <Label>Radnik</Label>
-                <Select value={sickLeaveForm.workerId} onValueChange={(v) => setSickLeaveForm((s) => ({ ...s, workerId: v }))}>
-                  <SelectTrigger>
-                    <SelectValue placeholder="Izaberite radnika" />
-                  </SelectTrigger>
-                  <SelectContent>
-                    {workers.map((w) => (
-                      <SelectItem key={w.id} value={w.id}>
-                        {w.fullName}
-                      </SelectItem>
-                    ))}
-                  </SelectContent>
-                </Select>
+                <Popover open={sickLeaveWorkerSelectOpen} onOpenChange={setSickLeaveWorkerSelectOpen}>
+                  <PopoverTrigger asChild>
+                    <Button variant="outline" role="combobox" className="w-full justify-between">
+                      <span className="truncate text-left">
+                        {workers.find((w) => w.id === sickLeaveForm.workerId)?.fullName ?? "Izaberite radnika"}
+                      </span>
+                      <Search className="ml-2 h-4 w-4 shrink-0 opacity-50" />
+                    </Button>
+                  </PopoverTrigger>
+                  <PopoverContent className="p-0 w-[var(--radix-popover-trigger-width)]">
+                    <Command>
+                      <CommandInput
+                        placeholder="Pretraži radnika..."
+                        value={sickLeaveWorkerSearch}
+                        onValueChange={setSickLeaveWorkerSearch}
+                      />
+                      <CommandList>
+                        <CommandEmpty>Nema rezultata.</CommandEmpty>
+                        <CommandGroup>
+                          {filteredWorkersForSickLeaveSelect.map((w) => (
+                            <CommandItem
+                              key={w.id}
+                              value={`${w.fullName} ${w.position ?? ""} ${w.phone ?? ""}`}
+                              onSelect={() => {
+                                setSickLeaveForm((s) => ({ ...s, workerId: w.id }));
+                                setSickLeaveWorkerSelectOpen(false);
+                              }}
+                            >
+                              <span className={cn("mr-2 h-2 w-2 rounded-full", sickLeaveForm.workerId === w.id ? "bg-primary" : "bg-transparent")} />
+                              <div className="flex min-w-0 flex-col">
+                                <span className="truncate">{w.fullName}</span>
+                                <span className="truncate text-xs text-muted-foreground">{w.position || "—"} · {w.phone || "—"}</span>
+                              </div>
+                            </CommandItem>
+                          ))}
+                        </CommandGroup>
+                      </CommandList>
+                    </Command>
+                  </PopoverContent>
+                </Popover>
               </div>
               <div>
                 <Label>Razlog</Label>
-                <Input value={sickLeaveForm.reason} onChange={(e) => setSickLeaveForm((s) => ({ ...s, reason: e.target.value }))} />
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 rounded-md border border-border p-3">
+                  {ABSENCE_REASON_OPTIONS.map((reason) => {
+                    const checked = sickLeaveForm.reasons.includes(reason.value);
+                    return (
+                      <label key={reason.value} className="flex items-center gap-2 text-sm">
+                        <Checkbox
+                          checked={checked}
+                          onCheckedChange={(value) => {
+                            setSickLeaveForm((s) => {
+                              const nextReasons = value
+                                ? [...s.reasons, reason.value]
+                                : s.reasons.filter((r) => r !== reason.value);
+                              return { ...s, reasons: Array.from(new Set(nextReasons)) };
+                            });
+                          }}
+                        />
+                        {reason.label}
+                      </label>
+                    );
+                  })}
+                </div>
+              </div>
+              {sickLeaveForm.reasons.includes("ostalo") && (
+                <div>
+                  <Label>Ostalo (upišite razlog)</Label>
+                  <Input
+                    value={sickLeaveForm.otherReason}
+                    onChange={(e) => setSickLeaveForm((s) => ({ ...s, otherReason: e.target.value }))}
+                    placeholder="Npr. porodične obaveze..."
+                  />
+                </div>
+              )}
+              <div className="grid grid-cols-1 gap-2 sm:grid-cols-2">
               </div>
               <div className="grid grid-cols-1 gap-2 sm:grid-cols-2">
                 <div>

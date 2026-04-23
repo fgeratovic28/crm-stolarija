@@ -1,4 +1,4 @@
-import { JOB_STATUS_CONFIG, type FileCategory, type JobStatus, type MaterialOrder, type WorkOrder, type WorkOrderType } from "@/types";
+import { JOB_STATUS_CONFIG, type FileCategory, type JobStatus, type MaterialOrder, type QuoteStatus, type WorkOrder, type WorkOrderType } from "@/types";
 
 const WORK_ORDER_TYPE_LABELS: Record<WorkOrderType, string> = {
   measurement: "Merenje",
@@ -47,6 +47,13 @@ const FILE_CATEGORY_LABELS: Record<FileCategory, string> = {
   reports: "Izveštaji",
 };
 
+const QUOTE_STATUS_LABELS: Record<QuoteStatus, string> = {
+  draft: "Draft",
+  sent: "Poslata",
+  accepted: "Prihvaćena",
+  rejected: "Odbijena",
+};
+
 export const labelJobStatus = (status: JobStatus | string) =>
   JOB_STATUS_CONFIG[status as JobStatus]?.label ?? status;
 export const labelWorkOrderType = (type: WorkOrderType | string) => WORK_ORDER_TYPE_LABELS[type as WorkOrderType] ?? type;
@@ -54,3 +61,4 @@ export const labelWorkOrderStatus = (status: WorkOrder["status"] | string) => WO
 export const labelMaterialType = (type: MaterialOrder["materialType"] | string) => MATERIAL_TYPE_LABELS[type as MaterialOrder["materialType"]] ?? type;
 export const labelDeliveryStatus = (status: MaterialOrder["deliveryStatus"] | string) => DELIVERY_STATUS_LABELS[status as MaterialOrder["deliveryStatus"]] ?? status;
 export const labelFileCategory = (category: FileCategory | string) => FILE_CATEGORY_LABELS[category as FileCategory] ?? category;
+export const labelQuoteStatus = (status: QuoteStatus | string) => QUOTE_STATUS_LABELS[status as QuoteStatus] ?? status;

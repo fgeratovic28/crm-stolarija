@@ -1,5 +1,5 @@
 import { upsertSystemActivity } from "@/lib/activity-automation";
-import { buildMaterialOrderFileKey, uploadFileToR2 } from "@/lib/r2-storage";
+import { buildMaterialOrderFileKey, publicUrlWithCacheBust, uploadFileToR2 } from "@/lib/r2-storage";
 import { supabase } from "@/lib/supabase";
 
 function formatSize(bytes: number): string {
@@ -66,7 +66,7 @@ export async function upsertMaterialOrderGeneratedPdf(input: {
   const storageKey = buildMaterialOrderFileKey(input.materialOrderId, MATERIAL_ORDER_GENERATED_PDF_STORAGE_LEAF);
   const file = new File([input.blob], input.displayFilename, { type: "application/pdf" });
   const basePublicUrl = await uploadFileToR2(storageKey, file);
-  const storageUrl = storageUrlWithCacheBust(basePublicUrl);
+  const storageUrl = publicUrlWithCacheBust(basePublicUrl);
 
   const { data: rows, error: selErr } = await supabase
     .from("files")

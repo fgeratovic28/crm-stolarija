@@ -21,7 +21,7 @@ export default function LoginPage() {
   const { toast } = useToast();
   const navigate = useNavigate();
   const location = useLocation();
-  const { isAuthenticated, user, isPendingApproval, authReady } = useAuthStore();
+  const { isAuthenticated, user, isPendingApproval, authReady, authProfileReady } = useAuthStore();
   const [bootScreenDone, setBootScreenDone] = useState(() => hasRichSplashCompleted());
   const onBootScreenComplete = useCallback(() => setBootScreenDone(true), []);
 
@@ -39,14 +39,23 @@ export default function LoginPage() {
 
   useEffect(() => {
     document.title = isRegistering ? "Registracija | CRM Stolarija" : "Prijava | CRM Stolarija";
-    if (isAuthenticated && isPendingApproval) {
+    if (isAuthenticated && authProfileReady && isPendingApproval) {
       navigate("/pending-approval", { replace: true });
       return;
     }
-    if (isAuthenticated && user && cameFromProtectedRoute) {
+    if (isAuthenticated && user && authProfileReady && !isPendingApproval && cameFromProtectedRoute) {
       navigate(redirectAfterLogin, { replace: true });
     }
-  }, [isAuthenticated, isPendingApproval, user, navigate, isRegistering, redirectAfterLogin, cameFromProtectedRoute]);
+  }, [
+    isAuthenticated,
+    authProfileReady,
+    isPendingApproval,
+    user,
+    navigate,
+    isRegistering,
+    redirectAfterLogin,
+    cameFromProtectedRoute,
+  ]);
 
   const handleAuth = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -140,6 +149,10 @@ export default function LoginPage() {
     return <AuthHydratingFallback />;
   }
 
+  if (isAuthenticated && !authProfileReady) {
+    return <AuthHydratingFallback />;
+  }
+
   return (
     <div className="min-h-screen flex items-center justify-center bg-background p-4">
       <div className="w-full max-w-sm">
@@ -148,7 +161,7 @@ export default function LoginPage() {
             <div className="w-14 h-14 rounded-2xl bg-primary flex items-center justify-center mb-4">
               <Hammer className="w-7 h-7 text-primary-foreground" />
             </div>
-            {isAuthenticated && user && !isPendingApproval && !cameFromProtectedRoute && (
+            {isAuthenticated && user && authProfileReady && !isPendingApproval && !cameFromProtectedRoute && (
               <div className="w-full mb-6 p-4 rounded-xl border border-border bg-muted/40 text-left space-y-3">
                 <p className="text-sm text-muted-foreground">
                   Već ste prijavljeni (sesija je deljena između kartica u istom pregledaču). Možete otvoriti

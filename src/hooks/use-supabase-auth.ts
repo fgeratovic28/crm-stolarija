@@ -2,17 +2,18 @@ import { useCallback, useEffect, useRef } from "react";
 import { useQueryClient } from "@tanstack/react-query";
 import type { Session } from "@supabase/supabase-js";
 import { markRichSplashCompleted } from "@/lib/rich-splash-session";
+import { syncAppSettingsCacheFromSupabase } from "@/lib/app-settings";
 import { authStorageKey, persistAuthSession, supabase } from "@/lib/supabase";
 import { useAuthStore, type AccessBlockReason } from "@/stores/auth-store";
 import { roleHasAppAccess } from "@/config/permissions";
 import { AppUser, UserRole } from "@/types";
 
-/** Koliko čekati getSession pre drugog pokušaja / predaje (bez refreshSession petlje). */
-const SESSION_RESOLVE_MS = 12_000;
-/** Ako se hidracija zaglavi (lock / SW / iOS), ipak pusti UI — inače ostaje „Provera sesije…”. */
-const AUTH_READY_WATCHDOG_MS = 10_000;
-/** Profil iz DB ne sme blokirati authReady niti UI beskonačno. */
-const PROFILE_FETCH_MS = 10_000;
+/** Koliko čekati getSession po pokušaju; sa jednim retry ostajemo ispod ~5s ukupno. */
+const SESSION_RESOLVE_MS = 2_200;
+/** Hard limit za prvi ekran učitavanja ("Provera veze sa serverom"). */
+const AUTH_READY_WATCHDOG_MS = 5_000;
+/** Profil iz DB ne sme da drži početni loading duže od 5s. */
+const PROFILE_FETCH_MS = 5_000;
 /** Debounce za evente (focus/visibility/online) da izbegnemo duple getSession pozive. */
 const SESSION_RECHECK_DEBOUNCE_MS = 1_500;
 
@@ -162,7 +163,8 @@ function appUserFromSessionFallback(session: Session): AppUser {
 
 export function useSupabaseAuth() {
   const queryClient = useQueryClient();
-  const { setUser, setAuthReady, setPendingApproval, setAccessBlockReason, applyAuthProfile } = useAuthStore();
+  const { setUser, setAuthReady, setAuthProfileReady, setPendingApproval, setAccessBlockReason, applyAuthProfile } =
+    useAuthStore();
 
   const clearQueryCacheOnLogout = useCallback(() => {
     try {
@@ -300,7 +302,9 @@ export function useSupabaseAuth() {
         // Profil trenutno nije dostupan (RLS/mreža/timeout) — ne zaključavaj validne postojeće naloge.
         setPendingApproval(false);
         setAccessBlockReason(null);
+        setAuthProfileReady(true);
       }
+      void syncAppSettingsCacheFromSupabase();
     } catch (e) {
       console.error("applySessionToStore failed:", e);
       if (!isActive() || !session?.user) return;
@@ -314,8 +318,9 @@ export function useSupabaseAuth() {
       } catch {
         /* ignore */
       }
+      if (isActive()) setAuthProfileReady(true);
     }
-  }, [applyAuthProfile, fetchProfile, setAccessBlockReason, setPendingApproval, setUser]);
+  }, [applyAuthProfile, fetchProfile, setAccessBlockReason, setAuthProfileReady, setPendingApproval, setUser]);
 
   /** Sinhrono postavi JWT korisnika pa u pozadini dovuci profil — authReady ne čeka mrežu. */
   const applySessionFastThenProfile = useCallback((session: Session | null, isActive: () => boolean) => {
@@ -337,6 +342,7 @@ export function useSupabaseAuth() {
         setUser(fallbackUser);
       }
     }
+    void syncAppSettingsCacheFromSupabase();
     void (async () => {
       try {
         const profile = await fetchProfile(
@@ -354,12 +360,14 @@ export function useSupabaseAuth() {
           // Profil trenutno nije dostupan (RLS/mreža/timeout) — ne zaključavaj validne postojeće naloge.
           setPendingApproval(false);
           setAccessBlockReason(null);
+          setAuthProfileReady(true);
         }
       } catch (e) {
         console.error("Background profile fetch failed:", e);
+        if (isActive()) setAuthProfileReady(true);
       }
     })();
-  }, [applyAuthProfile, fetchProfile, setAccessBlockReason, setPendingApproval, setUser]);
+  }, [applyAuthProfile, fetchProfile, setAccessBlockReason, setAuthProfileReady, setPendingApproval, setUser]);
 
   const revalidateAuthState = useCallback(
     async (isActive: () => boolean, source: string) => {
@@ -445,14 +453,20 @@ export function useSupabaseAuth() {
             if (session?.user && isActive()) {
               const fallbackRole =
                 useAuthStore.getState().user?.role ?? appUserFromSessionFallback(session).role;
-              const appUser = await fetchProfile(session.user.id, fallbackRole);
-              if (!isActive()) return;
-              if (appUser) {
-                applyAuthProfile({
-                  user: appUser.user,
-                  pendingApproval: appUser.pendingApproval,
-                  accessBlockReason: appUser.accessBlockReason,
-                });
+              try {
+                const appUser = await fetchProfile(session.user.id, fallbackRole);
+                if (!isActive()) return;
+                if (appUser) {
+                  applyAuthProfile({
+                    user: appUser.user,
+                    pendingApproval: appUser.pendingApproval,
+                    accessBlockReason: appUser.accessBlockReason,
+                  });
+                } else {
+                  setAuthProfileReady(true);
+                }
+              } catch {
+                if (isActive()) setAuthProfileReady(true);
               }
             }
             return;
@@ -528,6 +542,7 @@ export function useSupabaseAuth() {
                 setAccessBlockReason(null);
                 setPendingApproval(!roleHasAppAccess(fb.role));
                 setUser(fb);
+                setAuthProfileReady(true);
               } catch {
                 if (isActive()) setUser(null);
               }
@@ -630,6 +645,7 @@ export function useSupabaseAuth() {
     clearQueryCacheOnLogout,
     setUser,
     setAuthReady,
+    setAuthProfileReady,
     setPendingApproval,
     setAccessBlockReason,
     applyAuthProfile,

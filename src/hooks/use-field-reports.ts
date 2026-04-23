@@ -16,12 +16,31 @@ function parseFieldReportDetails(raw: unknown): FieldReportDetails {
   if (!raw || typeof raw !== "object" || Array.isArray(raw)) return {};
   const o = raw as Record<string, unknown>;
   const pick = (k: string) => (typeof o[k] === "string" ? (o[k] as string) : undefined);
+  const rawCompletedItems = o.productionCompletedItems;
+  const productionCompletedItems = Array.isArray(rawCompletedItems)
+    ? rawCompletedItems
+        .map((entry) => {
+          if (!entry || typeof entry !== "object" || Array.isArray(entry)) return null;
+          const row = entry as Record<string, unknown>;
+          const profileTitle = typeof row.profileTitle === "string" ? row.profileTitle.trim() : "";
+          const barcode = typeof row.barcode === "string" ? row.barcode.trim() : "";
+          if (!profileTitle || !barcode) return null;
+          return {
+            profileCode: typeof row.profileCode === "string" ? row.profileCode : undefined,
+            profileTitle,
+            barcode,
+            completedAt: typeof row.completedAt === "string" ? row.completedAt : undefined,
+          };
+        })
+        .filter((item): item is NonNullable<typeof item> => !!item)
+    : undefined;
   return {
     arrivedAt: pick("arrivedAt"),
     canceledAt: pick("canceledAt"),
     finishedAt: pick("finishedAt"),
     issueReportedAt: pick("issueReportedAt"),
     additionalReqAt: pick("additionalReqAt"),
+    productionCompletedItems,
   };
 }
 
@@ -51,10 +70,10 @@ export function useFieldReports(jobId?: string, workOrderId?: string) {
         "jobs ( id, job_number, installation_address, customers (name) )";
       /** Za timske uloge: samo izveštaji vezani za RN njihovog tima (usklađeno sa RLS). */
       const workOrderNested = fieldTeamScoped
-        ? `work_orders!inner ( job_id, type, team_id, ${jobsEmbed} )`
+        ? `work_orders!field_reports_work_order_id_fkey!inner ( job_id, type, team_id, ${jobsEmbed} )`
         : jobId
-          ? `work_orders!inner ( job_id, type, team_id, ${jobsEmbed} )`
-          : `work_orders ( job_id, type, team_id, ${jobsEmbed} )`;
+          ? `work_orders!field_reports_work_order_id_fkey!inner ( job_id, type, team_id, ${jobsEmbed} )`
+          : `work_orders!field_reports_work_order_id_fkey ( job_id, type, team_id, ${jobsEmbed} )`;
 
       let query = supabase.from("field_reports").select(`*, ${workOrderNested}`);
 
@@ -199,14 +218,14 @@ export function useFieldReports(jobId?: string, workOrderId?: string) {
           console.warn("applyFieldReportWorkflowBranching posle terenskog izveštaja:", err);
         }
         try {
-          await ensureWorkflowWorkOrders(report.jobId);
-        } catch (err) {
-          console.warn("ensureWorkflowWorkOrders posle terenskog izveštaja:", err);
-        }
-        try {
           await recomputeJobStatus(report.jobId, user?.id ?? null);
         } catch (err) {
           console.warn("Auto status recompute failed after field report:", err);
+        }
+        try {
+          await ensureWorkflowWorkOrders(report.jobId);
+        } catch (err) {
+          console.warn("ensureWorkflowWorkOrders posle terenskog izveštaja:", err);
         }
       }
 

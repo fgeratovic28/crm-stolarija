@@ -1,13 +1,18 @@
 export type JobStatus =
   | "new"
   | "quote_sent"
+  | "accepted"
   | "measuring"
+  | "measurement_processing"
+  | "ready_for_work"
+  | "waiting_material"
   | "in_production"
   | "scheduled"
   | "installation_in_progress"
   | "completed"
   | "complaint"
-  | "service";
+  | "service"
+  | "canceled";
 
 export type CommunicationType = "email" | "phone" | "in_person" | "viber" | "other";
 
@@ -50,6 +55,16 @@ export type FileCategory =
   | "field_photos"
   | "reports";
 
+export type QuoteStatus = "draft" | "sent" | "accepted" | "rejected";
+export interface QuoteLine {
+  id: string;
+  quoteId: string;
+  sortOrder: number;
+  description: string;
+  quantity: number;
+  unitPrice: number;
+}
+
 export interface Customer {
   id: string;
   customerNumber: string;
@@ -80,6 +95,12 @@ export interface FieldReportDetails {
   finishedAt?: string;
   issueReportedAt?: string;
   additionalReqAt?: string;
+  productionCompletedItems?: Array<{
+    profileCode?: string;
+    profileTitle: string;
+    barcode: string;
+    completedAt?: string;
+  }>;
 }
 
 export interface Job {
@@ -109,6 +130,8 @@ export interface Job {
   jobBillingAddress?: string;
   jobInstallationAddress?: string;
   customerPhone?: string;
+  /** Evidentirane uplate za posao (potrebno za finansijske filtere po periodu). */
+  payments?: Payment[];
 }
 
 export interface Activity {
@@ -139,6 +162,17 @@ export interface Supplier {
   address: string;
   materialTypes: MaterialType[];
   active: boolean;
+  /** Žiro / tekući račun dobavljača (porudžbenica). */
+  bankAccount?: string;
+  /** PIB dobavljača. */
+  pib?: string;
+  /** Podrazumevani podaci za porudžbenicu (povlače se pri izboru dobavljača u narudžbini). */
+  nbShippingMethod?: string;
+  /** Broj dana od datuma narudžbine do roka plaćanja; prazno = bez automatskog datuma. */
+  nbPaymentDaysAfterOrder?: number;
+  nbLegalReference?: string;
+  nbPaymentNote?: string;
+  nbDeliveryAddressOverride?: string;
 }
 
 /** Jedna stavka na narudžbini / porudžbenici (iznos bez PDV-a). */
@@ -149,6 +183,10 @@ export interface MaterialOrderLine {
   /** Ukupan iznos stavke bez PDV-a (RSD). */
   lineNet: number;
   materialType?: MaterialType;
+  /** ID-ovi stavki krojne liste (`job_items`) ako je linija nastala iz importa / nabavke. */
+  sourceJobItemIds?: string[];
+  /** Količina iz originalne narudžbine pre SEF usklađivanja (JSON `nb_lines`). */
+  orderedQuantity?: number;
 }
 
 export interface MaterialOrder {
@@ -162,6 +200,11 @@ export interface MaterialOrder {
   supplierContact: string; // Keep for display
   /** Adresa dobavljača (iz šifarnika), za štampu. */
   supplierAddress?: string;
+  supplierPhone?: string;
+  supplierEmail?: string;
+  /** Žiro / tekući račun dobavljača (šifarnik). */
+  supplierBankAccount?: string;
+  supplierPib?: string;
   orderDate: string; // This is the request date
   requestDate: string; // New: explicit request date
   deliveryDate?: string; // New: actual delivery date
@@ -174,6 +217,10 @@ export interface MaterialOrder {
   deliveryVerified: boolean; // New: renamed from quantityVerified
   barcode?: string;
   notes?: string;
+  /** Tekst reklamacije / primedbe dobavljaču (npr. posle SEF provere). */
+  supplierComplaintNote?: string;
+  /** Kada je korisnik potvrdio usaglašenost sa učitanim SEF XML-om. */
+  sefReconciliationAt?: string;
   deliveryStatus: "pending" | "shipped" | "delivered" | "partial";
   quantityVerified: boolean; // Keep for display
   allDelivered: boolean;
@@ -198,6 +245,20 @@ export interface MaterialOrder {
   nbDeliveryAddressOverride?: string;
 }
 
+export interface JobItem {
+  id: string;
+  jobId: string;
+  profileCode: string;
+  profileTitle: string;
+  color: string;
+  cutLength: number;
+  quantity: number;
+  barcode: string;
+  isCompleted: boolean;
+  completedAt?: string;
+  metadata: Record<string, unknown>;
+}
+
 export interface WorkOrder {
   id: string;
   jobId: string;
@@ -211,6 +272,7 @@ export interface WorkOrder {
   attachmentName?: string;
   installationRef?: string;
   productionRef?: string;
+  createdAt?: string;
 }
 
 export interface FieldReport {
@@ -260,6 +322,26 @@ export interface AppFile {
   storageKey?: string;
   /** Javni URL u R2 (sačuvan pri otpremi) */
   storageUrl?: string;
+}
+
+export interface Quote {
+  id: string;
+  jobId: string;
+  quoteNumber: string;
+  versionNumber: number;
+  /** Finalna ponuda za posao (ako je podržano u bazi). */
+  isFinalOffer?: boolean;
+  /** Da li su jedinične cene u ovoj ponudi sa uključenim PDV-om. */
+  pricesIncludeVat?: boolean;
+  status: QuoteStatus;
+  totalAmount: number;
+  note?: string;
+  fileUrl?: string;
+  fileStorageKey?: string;
+  createdBy?: string;
+  createdAt: string;
+  updatedAt: string;
+  lines: QuoteLine[];
 }
 
 export interface Team {
@@ -348,11 +430,31 @@ export const JOB_STATUS_CONFIG: Record<
     color: "bg-sky-500/15 text-sky-800 dark:text-sky-200",
     automationHint: "Menja se samo ručno iz padajuće liste (nema automatskog prelaza u ovaj status).",
   },
+  accepted: {
+    label: "Prihvaćeno",
+    color: "bg-success text-success-foreground",
+    automationHint: "Ručno potvrđen posao; automatska pravila ne prepisuju ovaj status dok se ručno ne promeni.",
+  },
   measuring: {
     label: "Merenje",
     color: "bg-emerald-500/15 text-emerald-800 dark:text-emerald-200",
     automationHint:
       "Postoji RN merenja / kontrola mera koji još nije završen (na čekanju ili u toku). Posle završetka svih → „U proizvodnji“.",
+  },
+  measurement_processing: {
+    label: "Obrada mera",
+    color: "bg-violet-500/15 text-violet-800 dark:text-violet-200",
+    automationHint: "Ručno označena obrada rezultata merenja; automatska pravila ga ne prepisuju.",
+  },
+  ready_for_work: {
+    label: "Spremno za rad",
+    color: "bg-teal-500/15 text-teal-800 dark:text-teal-200",
+    automationHint: "Ručna operativna priprema pre nabavke/proizvodnje; automatska pravila ga ne prepisuju.",
+  },
+  waiting_material: {
+    label: "Čeka materijal",
+    color: "bg-amber-500/20 text-amber-900 dark:text-amber-100",
+    automationHint: "Ručno označeno čekanje materijala; automatska pravila ga ne prepisuju.",
   },
   in_production: {
     label: "U proizvodnji",
@@ -383,6 +485,11 @@ export const JOB_STATUS_CONFIG: Record<
     label: "Servis",
     color: "bg-muted text-muted-foreground",
     automationHint: "Menja se samo ručno (servisni režim); automatska pravila statusa se ne primenjuju.",
+  },
+  canceled: {
+    label: "Otkazan",
+    color: "bg-muted text-muted-foreground",
+    automationHint: "Posao je obustavljen/otkazan ručno; automatska pravila ne prepisuju ovaj status.",
   },
 };
 

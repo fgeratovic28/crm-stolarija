@@ -1,6 +1,6 @@
 import { useState, useEffect } from "react";
 import { useNavigate, useSearchParams } from "react-router-dom";
-import { Users, Search, Trash2, Briefcase, Plus, Edit2, Phone, Mail, FileSpreadsheet } from "lucide-react";
+import { Users, Search, Trash2, Briefcase, Plus, Edit2, Phone, Mail } from "lucide-react";
 import { AppLayout } from "@/components/layout/AppLayout";
 import { PageHeader } from "@/components/shared/PageHeader";
 import { Breadcrumbs } from "@/components/shared/Breadcrumbs";
@@ -21,8 +21,7 @@ import { useCustomers } from "@/hooks/use-customers";
 import { formatCurrencyBySettings, readAppSettingsCache } from "@/lib/app-settings";
 import { cn } from "@/lib/utils";
 import { jobPrimaryPhone } from "@/lib/job-contact-phone";
-import type { Job, Customer } from "@/types";
-import { ImportExcelButton } from "@/components/shared/ImportExcelButton";
+import type { Job } from "@/types";
 
 const filterConfigs: FilterConfig[] = [
   {
@@ -30,13 +29,18 @@ const filterConfigs: FilterConfig[] = [
     options: [
       { value: "new", label: "Upit" },
       { value: "quote_sent", label: "Ponuda poslata" },
+      { value: "accepted", label: "Prihvaćeno" },
       { value: "measuring", label: "Merenje" },
+      { value: "measurement_processing", label: "Obrada mera" },
+      { value: "ready_for_work", label: "Spremno za rad" },
+      { value: "waiting_material", label: "Čeka materijal" },
       { value: "in_production", label: "U proizvodnji" },
       { value: "scheduled", label: "Čeka ugradnju" },
       { value: "installation_in_progress", label: "Ugradnja u toku" },
       { value: "completed", label: "Završen" },
       { value: "complaint", label: "Reklamacija" },
       { value: "service", label: "Servis" },
+      { value: "canceled", label: "Otkazan" },
     ],
   },
   {
@@ -80,7 +84,7 @@ export default function JobsListPage() {
   }, [searchParams, showCustomersTab, setSearchParams]);
 
   const { jobs = [], isLoading: loadingJobs, deleteJob } = useJobs();
-  const { customers = [], isLoading: loadingCustomers, createCustomer, deleteCustomer } = useCustomers();
+  const { customers = [], isLoading: loadingCustomers, deleteCustomer } = useCustomers();
   const appSettings = readAppSettingsCache();
 
   const filteredJobs = jobs.filter((j) => {
@@ -142,37 +146,9 @@ export default function JobsListPage() {
           actions={
             <div className="flex gap-2">
               {activeTab === "customers" && canPerformAction("create_job") && (
-                <>
-                  <ImportExcelButton<Partial<Customer>>
-                    label="Uvezi klijente"
-                    variant="outline"
-                    onImport={async (data) => {
-                      for (const customer of data) {
-                        await createCustomer.mutateAsync({
-                          fullName: customer.fullName || "",
-                          contactPerson: customer.contactPerson || "",
-                          billingAddress: customer.billingAddress || "",
-                          installationAddress: customer.installationAddress || "",
-                          phones: customer.phones || [],
-                          emails: customer.emails || [],
-                          pib: customer.pib || "",
-                          registrationNumber: customer.registrationNumber || "",
-                        });
-                      }
-                    }}
-                    columnMap={{
-                      "Ime i prezime": "fullName",
-                      "Kontakt osoba": "contactPerson",
-                      "Adresa za naplatu": "billingAddress",
-                      "Adresa za montažu": "installationAddress",
-                      "PIB": "pib",
-                      "Matični broj": "registrationNumber",
-                    }}
-                  />
-                  <Button size="sm" variant="outline" onClick={() => navigate("/customers/new")}>
-                    <Plus className="w-4 h-4 mr-1" /> Novi klijent
-                  </Button>
-                </>
+                <Button size="sm" variant="outline" onClick={() => navigate("/customers/new")}>
+                  <Plus className="w-4 h-4 mr-1" /> Novi klijent
+                </Button>
               )}
               {canPerformAction("create_job") && <NewJobModal />}
             </div>
@@ -219,7 +195,7 @@ export default function JobsListPage() {
                     <table className="w-full">
                       <thead>
                         <tr className="border-b border-border">
-                          {["Posao #", "Kupac", "Telefon", "Status", "Ukupno", "Neplaćeno", ""].map((h) => (
+                          {["Posao #", "Kupac", "Telefon", "Status", "Procenjena cena", "Neplaćeno", ""].map((h) => (
                             <th key={h} className="text-left text-xs font-medium text-muted-foreground px-4 lg:px-5 py-3">{h}</th>
                           ))}
                         </tr>

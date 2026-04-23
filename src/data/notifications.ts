@@ -118,6 +118,7 @@ function generateNotifications(
         (j) =>
           j.unpaidBalance > 0 &&
           j.status !== "new" &&
+          j.status !== "canceled" &&
           Math.floor((Date.now() - new Date(j.createdAt).getTime()) / 86400000) > settings.overdueDays
       )
       .forEach((j) => {
@@ -194,7 +195,16 @@ function generateNotifications(
 
   if (settings.notifStaleJobStatus) {
     const threshold = settings.jobStaleStatusDays;
-    const slaStatuses = new Set<Job["status"]>(["new", "quote_sent", "measuring", "in_production"]);
+    const slaStatuses = new Set<Job["status"]>([
+      "new",
+      "quote_sent",
+      "accepted",
+      "measuring",
+      "measurement_processing",
+      "ready_for_work",
+      "waiting_material",
+      "in_production",
+    ]);
     jobs
       .filter((j) => slaStatuses.has(j.status) && j.statusLocked !== true)
       .forEach((j) => {

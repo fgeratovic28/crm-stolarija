@@ -15,8 +15,10 @@ import { buildFieldReportPhotoKey, uploadFileToR2 } from "@/lib/r2-storage";
 import { useToast } from "@/hooks/use-toast";
 import { useQuery } from "@tanstack/react-query";
 import { useFieldReports } from "@/hooks/use-field-reports";
+import { useJobItems } from "@/hooks/use-job-items";
 import { fieldReportFlowForWorkOrderType } from "@/lib/field-team-access";
 import type { FieldReportDetails, WorkOrderType } from "@/types";
+import { ProductionMaterialTab } from "@/components/job-tabs/ProductionMaterialTab";
 
 interface NewFieldReportModalProps {
   open: boolean;
@@ -131,6 +133,7 @@ export function NewFieldReportModal({ open, onOpenChange, workOrderId }: NewFiel
 
   const isMeasurementWorkOrder = workOrderData?.type === "measurement";
   const isProductionReport = reportVariant === "production";
+  const { items: productionItems } = useJobItems(isProductionReport && jobId ? jobId : undefined);
 
   useEffect(() => {
     if (workOrderData) {
@@ -334,6 +337,16 @@ export function NewFieldReportModal({ open, onOpenChange, workOrderId }: NewFiel
     if (jobCompleted) details.finishedAt = finishedAt ?? nowIso;
     if (!everythingOk) details.issueReportedAt = issueReportedAt ?? nowIso;
     if (needsAdditionalItems) details.additionalReqAt = additionalReqAt ?? nowIso;
+    if (isProductionReport) {
+      details.productionCompletedItems = productionItems
+        .filter((item) => item.isCompleted)
+        .map((item) => ({
+          profileCode: item.profileCode || undefined,
+          profileTitle: item.profileTitle || item.profileCode || "Element",
+          barcode: item.barcode,
+          completedAt: item.completedAt,
+        }));
+    }
 
     const missingLabelParts: string[] = missingItemSelections
       .filter((k) => k !== "drugi_delovi")
@@ -387,10 +400,13 @@ export function NewFieldReportModal({ open, onOpenChange, workOrderId }: NewFiel
   };
 
   const toggleRowClass = "flex items-center justify-between gap-3 bg-muted/30 rounded-lg p-3";
+  const dialogContentClass = isProductionReport
+    ? "w-full sm:max-w-6xl max-h-[94vh] overflow-y-auto"
+    : "w-full sm:max-w-lg max-h-[90vh] overflow-y-auto";
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className="w-full sm:max-w-lg max-h-[90vh] overflow-y-auto">
+      <DialogContent className={dialogContentClass}>
         <DialogHeader>
           <DialogTitle className="flex items-center gap-2">
             {reportVariant === "production" ? (
@@ -450,6 +466,15 @@ export function NewFieldReportModal({ open, onOpenChange, workOrderId }: NewFiel
               <Input value={address} onChange={(e) => setAddress(e.target.value)} placeholder="Unesite adresu" />
             </div>
           )}
+
+          {isProductionReport && jobId ? (
+            <div className="rounded-lg border border-border bg-muted/20 p-3 space-y-2">
+              <p className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">
+                Forma naloga za proizvodnju (profili + skeniranje)
+              </p>
+              <ProductionMaterialTab jobId={jobId} mode="production" />
+            </div>
+          ) : null}
 
           {!isProductionReport && (
             <>

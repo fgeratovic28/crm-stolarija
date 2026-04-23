@@ -1,4 +1,5 @@
 import { useState } from "react";
+import { useQueryClient } from "@tanstack/react-query";
 import {
   MapPin,
   Factory,
@@ -20,6 +21,8 @@ import { ImageLightbox } from "@/components/shared/ImageLightbox";
 import { Separator } from "@/components/ui/separator";
 import { formatDateByAppLanguage, formatDateTimeBySettings } from "@/lib/app-settings";
 import { exportFieldReportPDF } from "@/lib/export-documents";
+import { useAuthStore } from "@/stores/auth-store";
+import { toast } from "sonner";
 import type { FieldReport, WorkOrderType } from "@/types";
 import { fieldReportFlowForWorkOrderType } from "@/lib/field-team-access";
 
@@ -31,17 +34,22 @@ interface FieldReportDetailModalProps {
 
 export function FieldReportDetailModal({ report, open, onOpenChange }: FieldReportDetailModalProps) {
   const [lightboxSrc, setLightboxSrc] = useState<string | null>(null);
+  const { user } = useAuthStore();
+  const queryClient = useQueryClient();
 
   if (!report) return null;
 
   const relatedJob = report.job;
   const reportFlow = fieldReportFlowForWorkOrderType(report.workOrderType as WorkOrderType | undefined);
   const isProductionReport = reportFlow === "production";
+  const dialogContentClass = isProductionReport
+    ? "w-full sm:max-w-5xl max-h-[94vh] overflow-y-auto"
+    : "w-full sm:max-w-lg max-h-[90vh] overflow-y-auto";
 
   return (
     <>
     <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className="w-full sm:max-w-lg">
+      <DialogContent className={dialogContentClass}>
         <DialogHeader>
           <DialogTitle className="flex items-center gap-2">
             {isProductionReport ? (
@@ -64,12 +72,6 @@ export function FieldReportDetailModal({ report, open, onOpenChange }: FieldRepo
 
           {/* Status badges */}
           <div className="flex flex-wrap gap-2">
-            {!isProductionReport && (
-              <GenericBadge
-                label={report.arrived ? "Stigao na teren" : "Nije stigao"}
-                variant={report.arrived ? "success" : "muted"}
-              />
-            )}
             <GenericBadge
               label={report.jobCompleted ? (isProductionReport ? "Proizvodnja završena" : "Gotov") : "Nije gotov"}
               variant={report.jobCompleted ? "success" : "warning"}
@@ -197,6 +199,25 @@ export function FieldReportDetailModal({ report, open, onOpenChange }: FieldRepo
             </div>
           )}
 
+          {isProductionReport && (report.details?.productionCompletedItems?.length ?? 0) > 0 && (
+            <div className="space-y-1.5">
+              <p className="text-xs font-medium text-muted-foreground flex items-center gap-1.5">
+                <Package className="w-3.5 h-3.5" />
+                Odradjeni elementi (bar kodovi) ({report.details?.productionCompletedItems?.length ?? 0})
+              </p>
+              <div className="rounded-lg border border-border bg-muted/20 p-2 max-h-48 overflow-y-auto">
+                <div className="space-y-1.5">
+                  {(report.details?.productionCompletedItems ?? []).map((item, idx) => (
+                    <div key={`${item.barcode}-${idx}`} className="rounded-md border border-border bg-background px-2 py-1.5">
+                      <p className="text-sm font-medium text-foreground">{item.profileTitle}</p>
+                      <p className="text-xs text-muted-foreground font-mono">{item.barcode}</p>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            </div>
+          )}
+
           {/* Images */}
           {report.images.length > 0 && (
             <div className="space-y-2">
@@ -226,7 +247,24 @@ export function FieldReportDetailModal({ report, open, onOpenChange }: FieldRepo
         </div>
 
         <div className="pt-3 border-t border-border">
-          <Button variant="outline" className="w-full" onClick={() => void exportFieldReportPDF(report)}>
+          <Button
+            variant="outline"
+            className="w-full"
+            onClick={() =>
+              void exportFieldReportPDF(report, {
+                attachGeneratedPdf: !!user?.id && !!report.jobId,
+                userId: user?.id,
+                onPdfAttached: (r) => {
+                  if (report.jobId) {
+                    queryClient.invalidateQueries({ queryKey: ["files", report.jobId] });
+                  }
+                  toast.success(r === "updated" ? "PDF je ažuriran u Fajlovima" : "PDF je sačuvan u Fajlovima");
+                },
+                onPdfAttachFailed: (m) =>
+                  toast.error("Štampa je otvorena, ali PDF nije sačuvan", { description: m }),
+              })
+            }
+          >
             <FileDown className="w-4 h-4 mr-1.5" />Preuzmi PDF
           </Button>
         </div>

@@ -14,7 +14,12 @@ import { Separator } from "@/components/ui/separator";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { supabase } from "@/lib/supabase";
-import { applyDocumentLanguageFromCache, writeAppSettingsCache } from "@/lib/app-settings";
+import {
+  applyDocumentLanguageFromCache,
+  mergeCompanyRowIntoCache,
+  readAppSettingsCache,
+  writeAppSettingsCache,
+} from "@/lib/app-settings";
 import { useI18n } from "@/contexts/I18nContext";
 import { toast } from "sonner";
 import { useRole } from "@/contexts/RoleContext";
@@ -40,6 +45,7 @@ type AppSettingsRow = {
   company_email: string;
   company_website: string;
   company_logo: string;
+  company_bank_account: string;
   notif_overdue_payments: boolean;
   notif_late_deliveries: boolean;
   notif_upcoming_installs: boolean;
@@ -73,6 +79,7 @@ export default function SettingsPage() {
   const [companyEmail, setCompanyEmail] = useState("office@stolarija-kovacevic.rs");
   const [companyWebsite, setCompanyWebsite] = useState("www.stolarija-kovacevic.rs");
   const [companyLogo, setCompanyLogo] = useState("");
+  const [companyBankAccount, setCompanyBankAccount] = useState("");
 
   const [notifOverduePayments, setNotifOverduePayments] = useState(true);
   const [notifLateDeliveries, setNotifLateDeliveries] = useState(true);
@@ -109,6 +116,7 @@ export default function SettingsPage() {
           company_email,
           company_website,
           company_logo,
+          company_bank_account,
           notif_overdue_payments,
           notif_late_deliveries,
           notif_upcoming_installs,
@@ -146,6 +154,7 @@ export default function SettingsPage() {
         setCompanyEmail(data.company_email);
         setCompanyWebsite(data.company_website);
         setCompanyLogo(data.company_logo);
+        setCompanyBankAccount(data.company_bank_account ?? "");
         setNotifOverduePayments(data.notif_overdue_payments);
         setNotifLateDeliveries(data.notif_late_deliveries);
         setNotifUpcomingInstalls(data.notif_upcoming_installs);
@@ -162,6 +171,7 @@ export default function SettingsPage() {
         setJobPrefix(data.job_prefix);
         setMaintenanceMode(data.maintenance_mode === true);
         writeAppSettingsCache({
+          ...mergeCompanyRowIntoCache(readAppSettingsCache(), data as unknown as Record<string, unknown>),
           language: data.language === "en" ? "en" : "sr",
           dateFormat:
             data.date_format === "dd/MM/yyyy" || data.date_format === "yyyy-MM-dd"
@@ -219,6 +229,7 @@ export default function SettingsPage() {
         company_email: companyEmail,
         company_website: companyWebsite,
         company_logo: companyLogo,
+        company_bank_account: companyBankAccount,
         notif_overdue_payments: notifOverduePayments,
         notif_late_deliveries: notifLateDeliveries,
         notif_upcoming_installs: notifUpcomingInstalls,
@@ -246,6 +257,16 @@ export default function SettingsPage() {
     }
 
     writeAppSettingsCache({
+      ...mergeCompanyRowIntoCache(readAppSettingsCache(), {
+        company_name: companyName,
+        company_pib: companyPib,
+        company_mb: companyMb,
+        company_address: companyAddress,
+        company_phone: companyPhone,
+        company_email: companyEmail,
+        company_website: companyWebsite,
+        company_bank_account: companyBankAccount,
+      }),
       language: language === "en" ? "en" : "sr",
       dateFormat:
         dateFormat === "dd/MM/yyyy" || dateFormat === "yyyy-MM-dd"
@@ -360,6 +381,16 @@ export default function SettingsPage() {
                 <div className="space-y-1.5">
                   <Label className="text-xs font-medium text-muted-foreground">{t("settings.company.logoUrl")}</Label>
                   <Input value={companyLogo} onChange={e => setCompanyLogo(e.target.value)} placeholder="https://..." disabled={isInitialLoading} />
+                </div>
+                <div className="space-y-1.5 sm:col-span-2">
+                  <Label className="text-xs font-medium text-muted-foreground">{t("settings.company.bankAccount")}</Label>
+                  <Input
+                    value={companyBankAccount}
+                    onChange={(e) => setCompanyBankAccount(e.target.value)}
+                    placeholder="160-0000000000000-00"
+                    disabled={isInitialLoading}
+                  />
+                  <p className="text-xs text-muted-foreground">{t("settings.company.bankAccountHint")}</p>
                 </div>
               </div>
             </div>

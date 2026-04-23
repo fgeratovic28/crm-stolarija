@@ -1,6 +1,7 @@
+import { useEffect, useRef } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { supabase } from "@/lib/supabase";
-import type { Payment, MaterialOrder, WorkOrder, FieldReport, FieldReportDetails } from "@/types";
+import type { Payment, MaterialOrder, WorkOrder, FieldReport, FieldReportDetails, Quote, JobItem } from "@/types";
 import { toast } from "sonner";
 import { useAuthStore } from "@/stores/auth-store";
 import { mapDbToActivity } from "@/hooks/use-activities";
@@ -8,6 +9,7 @@ import { mapDbToFile } from "@/hooks/use-files";
 import { isFieldExecutionRole } from "@/lib/field-team-access";
 import { upsertSystemActivity } from "@/lib/activity-automation";
 import { mapMaterialOrderRow } from "@/lib/map-material-order";
+import { recomputeJobStatus } from "@/lib/job-status-automation";
 
 type ErrorWithMessage = { message?: string };
 const getErrorMessage = (err: unknown) =>
@@ -19,6 +21,35 @@ export function useJobRelatedData(jobId: string | undefined) {
   const enabled = !!jobId;
   const queryClient = useQueryClient();
   const { user } = useAuthStore();
+  const realtimeInstanceRef = useRef(`job-items-live-instance-${Math.random().toString(36).slice(2)}`);
+
+  useEffect(() => {
+    if (!jobId) return;
+    const channelName = `job-items-live:${jobId}:${realtimeInstanceRef.current}`;
+    const channel = supabase
+      .channel(channelName)
+      .on(
+        "postgres_changes",
+        {
+          event: "*",
+          schema: "public",
+          table: "job_items",
+          filter: `job_id=eq.${jobId}`,
+        },
+        () => {
+          // Sync Job Details immediately after any scan/import/update.
+          void queryClient.invalidateQueries({ queryKey: ["job-items", jobId] });
+          void queryClient.invalidateQueries({ queryKey: ["job", jobId] });
+          void queryClient.invalidateQueries({ queryKey: ["work-orders", jobId] });
+          void queryClient.invalidateQueries({ queryKey: ["activities", jobId] });
+        },
+      )
+      .subscribe();
+
+    return () => {
+      void supabase.removeChannel(channel);
+    };
+  }, [jobId, queryClient]);
 
   const activities = useQuery({
     queryKey: ["activities", jobId],
@@ -67,7 +98,7 @@ export function useJobRelatedData(jobId: string | undefined) {
         .from("material_orders")
         .select(`
           *,
-          suppliers (id, name, contact_person, address),
+          suppliers (id, name, contact_person, address, phone, email, bank_account, pib, nb_shipping_method),
           jobs (id, job_number)
         `)
         .eq("job_id", jobId)
@@ -112,6 +143,7 @@ export function useJobRelatedData(jobId: string | undefined) {
           status: d.status,
           installationRef: (d as { installation_ref?: string | null }).installation_ref ?? undefined,
           productionRef: (d as { production_ref?: string | null }).production_ref ?? undefined,
+          createdAt: (d as { created_at?: string }).created_at,
         };
       }) as WorkOrder[];
     },
@@ -123,8 +155,8 @@ export function useJobRelatedData(jobId: string | undefined) {
     queryFn: async () => {
       const isFieldScoped = isFieldExecutionRole(user?.role);
       const selectStr = isFieldScoped
-        ? "*, work_orders!inner(id, team_id, type)"
-        : "*, work_orders!left(id, team_id, type)";
+        ? "*, work_orders!field_reports_work_order_id_fkey!inner(id, team_id, type)"
+        : "*, work_orders!field_reports_work_order_id_fkey!left(id, team_id, type)";
 
       let query = supabase
         .from("field_reports")
@@ -200,6 +232,78 @@ export function useJobRelatedData(jobId: string | undefined) {
     enabled,
   });
 
+  const quotes = useQuery({
+    queryKey: ["quotes", jobId],
+    queryFn: async () => {
+      const { data, error } = await supabase
+        .from("quotes")
+        .select("*, quote_lines(*)")
+        .eq("job_id", jobId)
+        .order("created_at", { ascending: false });
+      if (error) throw error;
+      return (data ?? []).map((d) => ({
+        id: d.id,
+        jobId: d.job_id,
+        quoteNumber: d.quote_number,
+        versionNumber: Number(d.version_number) || 1,
+        isFinalOffer:
+          d.is_final === true ||
+          (typeof d.note === "string" && d.note.trim().toLowerCase().startsWith("[final]")),
+        pricesIncludeVat: d.prices_include_vat !== false,
+        status: d.status,
+        totalAmount: Number(d.total_amount) || 0,
+        note: d.note ?? undefined,
+        fileUrl: d.file_url ?? undefined,
+        fileStorageKey: d.file_storage_key ?? undefined,
+        createdBy: d.created_by ?? undefined,
+        createdAt: d.created_at,
+        updatedAt: d.updated_at,
+        lines: Array.isArray(d.quote_lines)
+          ? [...d.quote_lines]
+              .sort((a, b) => (Number(a.sort_order) || 0) - (Number(b.sort_order) || 0))
+              .map((line) => ({
+                id: line.id,
+                quoteId: line.quote_id,
+                sortOrder: Number(line.sort_order) || 0,
+                description: line.description || "",
+                quantity: Number(line.quantity) || 0,
+                unitPrice: Number(line.unit_price) || 0,
+              }))
+          : [],
+      })) as Quote[];
+    },
+    enabled,
+  });
+
+  const jobItems = useQuery({
+    queryKey: ["job-items", jobId],
+    queryFn: async () => {
+      const { data, error } = await supabase
+        .from("job_items")
+        .select("*")
+        .eq("job_id", jobId)
+        .order("created_at", { ascending: true });
+      if (error) throw error;
+      return (data ?? []).map((d) => ({
+        id: d.id,
+        jobId: d.job_id,
+        profileCode: d.profile_code ?? "",
+        profileTitle: d.profile_title ?? "",
+        color: d.color ?? "",
+        cutLength: Number(d.cut_length) || 0,
+        quantity: Number(d.quantity) || 0,
+        barcode: d.barcode ?? "",
+        isCompleted: d.is_completed === true,
+        completedAt: d.completed_at ?? undefined,
+        metadata:
+          d.metadata && typeof d.metadata === "object" && !Array.isArray(d.metadata)
+            ? d.metadata
+            : {},
+      })) as JobItem[];
+    },
+    enabled,
+  });
+
   const recordPayment = useMutation({
     mutationFn: async (newPayment: Omit<Payment, "id">) => {
       const { data, error } = await supabase
@@ -222,6 +326,11 @@ export function useJobRelatedData(jobId: string | undefined) {
         type: "in_person",
         authorId: user?.id ?? null,
       });
+      try {
+        await recomputeJobStatus(newPayment.jobId, user?.id ?? null);
+      } catch (err) {
+        console.warn("Auto status recompute failed after payment:", err);
+      }
       return data;
     },
     onSuccess: () => {
@@ -242,7 +351,17 @@ export function useJobRelatedData(jobId: string | undefined) {
     workOrders: workOrders.data || [],
     fieldReports: fieldReports.data || [],
     files: files.data || [],
+    quotes: quotes.data || [],
+    jobItems: jobItems.data || [],
     recordPayment,
-    isLoading: activities.isLoading || payments.isLoading || materialOrders.isLoading || workOrders.isLoading || fieldReports.isLoading || files.isLoading,
+    isLoading:
+      activities.isLoading ||
+      payments.isLoading ||
+      materialOrders.isLoading ||
+      workOrders.isLoading ||
+      fieldReports.isLoading ||
+      files.isLoading ||
+      quotes.isLoading ||
+      jobItems.isLoading,
   };
 }

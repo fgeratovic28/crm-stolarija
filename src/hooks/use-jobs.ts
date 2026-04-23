@@ -10,20 +10,24 @@ import type { UserRole } from "@/types";
 import { upsertSystemActivity } from "@/lib/activity-automation";
 import { labelJobStatus } from "@/lib/activity-labels";
 import { ensureWorkflowWorkOrders } from "@/lib/work-order-workflow-automation";
+import { recomputeJobStatus } from "@/lib/job-status-automation";
+import { insertInitialQuoteForNewJob } from "@/hooks/use-quotes";
+import { computeJobAmountsFromLineSum, sumQuoteLineAmounts } from "@/lib/job-pricing";
 
-const VAT_RATE = 0.2;
+export { computeJobAmountsFromLineSum, sumQuoteLineAmounts } from "@/lib/job-pricing";
+
 const CREATE_JOB_ACTIVITY = { key: "initial-entry", description: "početni unos" } as const;
 
 const JOB_SELECT_MIN = `
   *,
   customers (*),
-  payments (amount)
+  payments (id, amount, date, vat_included, note)
 `;
 
 const JOB_SELECT_FULL = `
   *,
   customers (*),
-  payments (amount),
+  payments (id, amount, date, vat_included, note),
   job_quote_lines (*)
 `;
 
@@ -95,24 +99,6 @@ function mapQuoteLines(db: Record<string, unknown>): JobQuoteLine[] {
       quantity: Number(row.quantity) || 0,
       unitPrice: Number(row.unit_price) || 0,
     }));
-}
-
-/** Zbir stavki ponude (količina × jedinična cena), bez dodatnog obračuna PDV-a. */
-export function sumQuoteLineAmounts(lines: { quantity?: number; unitPrice?: number }[]): number {
-  return lines.reduce((s, l) => s + (Number(l.quantity) || 0) * (Number(l.unitPrice) || 0), 0);
-}
-
-/** Ako je uključeno, dodaje 20% PDV na zbir stavki; inače PDV ostaje 0. */
-export function computeJobAmountsFromLineSum(lineSum: number, pricesIncludeVat: boolean) {
-  if (lineSum <= 0) return { totalPrice: 0, vatAmount: 0, priceWithoutVat: 0 };
-  if (pricesIncludeVat) {
-    const priceWithoutVat = Math.round(lineSum * 100) / 100;
-    const vatAmount = Math.round(priceWithoutVat * VAT_RATE * 100) / 100;
-    const totalPrice = Math.round((priceWithoutVat + vatAmount) * 100) / 100;
-    return { totalPrice, vatAmount, priceWithoutVat };
-  }
-  const totalPrice = Math.round(lineSum * 100) / 100;
-  return { totalPrice, vatAmount: 0, priceWithoutVat: totalPrice };
 }
 
 // Helper to map DB to UI types
@@ -222,9 +208,27 @@ function sumPaymentsAmount(payments: unknown): number {
 }
 
 function applyPaymentsToJob(job: Job, db: Record<string, unknown>): Job {
-  const totalPaid = sumPaymentsAmount(db.payments);
+  const rawPayments = Array.isArray(db.payments) ? db.payments : [];
+  const payments = rawPayments
+    .map((row) => {
+      const p = row as Record<string, unknown>;
+      const id = typeof p.id === "string" ? p.id : "";
+      const date = typeof p.date === "string" ? p.date : "";
+      if (!id || !date) return null;
+      return {
+        id,
+        jobId: job.id,
+        amount: Number(p.amount) || 0,
+        date,
+        includesVat: p.vat_included !== false,
+        note: typeof p.note === "string" ? p.note : undefined,
+      } as Payment;
+    })
+    .filter((p): p is Payment => !!p);
+  const totalPaid = sumPaymentsAmount(rawPayments);
   job.advancePayment = totalPaid;
   job.unpaidBalance = job.totalPrice - totalPaid;
+  job.payments = payments;
   return job;
 }
 
@@ -350,6 +354,18 @@ export function useJobs() {
           const ign = code === "42P01" || code === "PGRST205";
           if (!ign) throw linesError;
         }
+
+        const quoteResult = await insertInitialQuoteForNewJob({
+          jobId: row.id,
+          quoteLines: newJob.quoteLines,
+          pricesIncludeVat: newJob.pricesIncludeVat,
+          authorId: createdBy,
+        });
+        if (!quoteResult.ok) {
+          toast.warning("Posao je kreiran, ali automatska ponuda (v1) nije sačuvana.", {
+            description: quoteResult.error,
+          });
+        }
       }
 
       if (newJob.advancePayment && newJob.advancePayment > 0) {
@@ -365,6 +381,14 @@ export function useJobs() {
 
         if (paymentError) {
           console.error("Error creating initial payment record:", paymentError);
+        }
+      }
+
+      if (newJob.advancePayment && newJob.advancePayment > 0) {
+        try {
+          await recomputeJobStatus(row.id, createdBy);
+        } catch (err) {
+          console.warn("Auto status recompute failed after initial advance payment:", err);
         }
       }
 
@@ -392,10 +416,15 @@ export function useJobs() {
       const full = await loadJobRow(row.id);
       return mapDbToJob(full);
     },
-    onSuccess: () => {
+    onSuccess: (data) => {
       queryClient.invalidateQueries({ queryKey: ["jobs"] });
       queryClient.invalidateQueries({ queryKey: ["jobs-list-minimal"] });
+      queryClient.invalidateQueries({ queryKey: ["completed-jobs-map"] });
+      queryClient.invalidateQueries({ queryKey: ["finances-summary"] });
       queryClient.invalidateQueries({ queryKey: ["activities"] });
+      if (data?.id) {
+        void queryClient.invalidateQueries({ queryKey: ["quotes", data.id] });
+      }
       toast.success("Posao uspešno kreiran");
     },
     onError: (err: Error) => {
@@ -405,6 +434,22 @@ export function useJobs() {
 
   const updateJobStatus = useMutation({
     mutationFn: async ({ id, status }: { id: string; status: JobStatus }) => {
+      if (status === "completed") {
+        const [{ data: jobData, error: jobTotalsError }, { data: paymentsData, error: paymentsError }] =
+          await Promise.all([
+            supabase.from("jobs").select("total_price").eq("id", id).single(),
+            supabase.from("payments").select("amount").eq("job_id", id),
+          ]);
+        if (jobTotalsError) throw jobTotalsError;
+        if (paymentsError) throw paymentsError;
+        const totalPrice = Number(jobData?.total_price) || 0;
+        const totalPaid = (paymentsData ?? []).reduce((sum, row) => sum + (Number(row.amount) || 0), 0);
+        const unpaidBalance = totalPrice - totalPaid;
+        if (unpaidBalance > 0.009) {
+          throw new Error("Status ne može na „Završen“ dok posao nije u potpunosti isplaćen.");
+        }
+      }
+
       const before = await supabase.from("jobs").select("status").eq("id", id).single();
       if (before.error) throw before.error;
       const previousStatus = before.data?.status as JobStatus | undefined;
@@ -432,6 +477,8 @@ export function useJobs() {
     onSuccess: (_, variables) => {
       queryClient.invalidateQueries({ queryKey: ["jobs"] });
       queryClient.invalidateQueries({ queryKey: ["job", variables.id] });
+      queryClient.invalidateQueries({ queryKey: ["completed-jobs-map"] });
+      queryClient.invalidateQueries({ queryKey: ["finances-summary"] });
       queryClient.invalidateQueries({ queryKey: ["work-orders"] });
       queryClient.invalidateQueries({ queryKey: ["work-orders", variables.id] });
       queryClient.invalidateQueries({ queryKey: ["activities"] });
@@ -520,6 +567,8 @@ export function useJobs() {
       queryClient.invalidateQueries({ queryKey: ["jobs"] });
       queryClient.invalidateQueries({ queryKey: ["job", variables.id] });
       queryClient.invalidateQueries({ queryKey: ["jobs-list-minimal"] });
+      queryClient.invalidateQueries({ queryKey: ["completed-jobs-map"] });
+      queryClient.invalidateQueries({ queryKey: ["finances-summary"] });
       toast.success("Posao uspešno izmenjen");
     },
     onError: (err: Error) => {
@@ -534,6 +583,8 @@ export function useJobs() {
     },
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ["jobs"] });
+      queryClient.invalidateQueries({ queryKey: ["completed-jobs-map"] });
+      queryClient.invalidateQueries({ queryKey: ["finances-summary"] });
       toast.success("Posao obrisan");
     },
     onError: (err: Error) => {
@@ -581,15 +632,34 @@ export function useFinancesData() {
       const { data: jobsData, error: jobsError } = await supabase
         .from("jobs")
         .select(`
+          status,
           total_price,
           payments (amount, date)
         `);
 
       if (jobsError) throw jobsError;
 
-      const totalRevenue = jobsData.reduce((s, j) => s + (Number(j.total_price) || 0), 0);
-      
-      const allPayments = jobsData.flatMap(j => Array.isArray(j.payments) ? j.payments : []);
+      const estimatedTotal = jobsData.reduce((s, j) => s + (Number(j.total_price) || 0), 0);
+
+      // Zvanična finansijska vrednost ulazi u KPI tek kada je ponuda prihvaćena.
+      const financiallyActiveStatuses = new Set([
+        "accepted",
+        "measuring",
+        "measurement_processing",
+        "ready_for_work",
+        "waiting_material",
+        "in_production",
+        "scheduled",
+        "installation_in_progress",
+        "completed",
+        "complaint",
+        "service",
+      ]);
+
+      const financiallyActiveJobs = jobsData.filter((j) => financiallyActiveStatuses.has(String(j.status)));
+      const totalRevenue = financiallyActiveJobs.reduce((s, j) => s + (Number(j.total_price) || 0), 0);
+
+      const allPayments = financiallyActiveJobs.flatMap(j => Array.isArray(j.payments) ? j.payments : []);
       const totalPaid = allPayments.reduce((s, p) => s + (Number(p.amount) || 0), 0);
       
       const totalUnpaid = totalRevenue - totalPaid;
@@ -612,6 +682,7 @@ export function useFinancesData() {
         .map(item => ({ month: item.label, naplaćeno: item.amount }));
 
       return {
+        estimatedTotal,
         totalRevenue,
         totalPaid,
         totalUnpaid,

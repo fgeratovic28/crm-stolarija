@@ -23,6 +23,13 @@ export function publicUrlForStorageKey(key: string): string {
   return `${base}/${segments.join("/")}`;
 }
 
+/** Isti javni URL posle prepisa u R2 — dodaj cache-bust da pregledač ne drži stari fajl. */
+export function publicUrlWithCacheBust(baseUrl: string): string {
+  const v = Date.now();
+  const sep = baseUrl.includes("?") ? "&" : "?";
+  return `${baseUrl}${sep}v=${v}`;
+}
+
 type PresignPutResponse = { key: string; uploadUrl: string };
 
 function serializeErrorContext(context: unknown): string | null {
@@ -131,6 +138,10 @@ export function buildJobFilesObjectKey(jobId: string | undefined, uniqueName: st
 /** Prilozi uz narudžbinu materijala (više fajlova po narudžbini). */
 export function buildMaterialOrderFileKey(materialOrderId: string, uniqueName: string): string {
   return `files/material-orders/${materialOrderId}/${uniqueName}`;
+}
+
+export function buildQuotePdfFileKey(jobId: string, uniqueName: string): string {
+  return `files/quotes/${jobId}/${uniqueName}`;
 }
 
 /**

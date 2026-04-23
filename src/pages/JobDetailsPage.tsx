@@ -1,4 +1,5 @@
 import { useState } from "react";
+import { useQueryClient } from "@tanstack/react-query";
 import { useParams, useNavigate } from "react-router-dom";
 import {
   ArrowLeft, MapPin, Phone, Mail, Building2, DollarSign, Package,
@@ -15,6 +16,10 @@ import { useRole } from "@/contexts/RoleContext";
 import { Button } from "@/components/ui/button";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
+import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
+import { Input } from "@/components/ui/input";
+import { Label } from "@/components/ui/label";
+import { Textarea } from "@/components/ui/textarea";
 import { toast } from "sonner";
 import { useJobDetails, useJobs } from "@/hooks/use-jobs";
 import { useJobRelatedData } from "@/hooks/use-job-data";
@@ -24,6 +29,7 @@ import { MaterialOrdersTab } from "@/components/job-tabs/MaterialOrdersTab";
 import { WorkOrdersTab } from "@/components/job-tabs/WorkOrdersTab";
 import { FieldReportsTab } from "@/components/job-tabs/FieldReportsTab";
 import { FilesTab } from "@/components/job-tabs/FilesTab";
+import { QuotesTab } from "@/components/job-tabs/QuotesTab";
 import { AddressMiniMap } from "@/components/shared/AddressMiniMap";
 import { AddActivityModal } from "@/components/modals/AddActivityModal";
 import { NewJobModal } from "@/components/modals/NewJobModal";
@@ -32,10 +38,17 @@ import { formatCurrencyBySettings, formatDateByAppLanguage } from "@/lib/app-set
 import { labelMaterialType, labelWorkOrderType } from "@/lib/activity-labels";
 import { getInstallationAddressForDisplay } from "@/lib/map-geocode";
 import { getJobInstallationScheduleDisplay } from "@/lib/job-installation-schedule";
+import { orderIsFromCutListNabavka } from "@/lib/material-order-lines";
+import { useWorkOrders } from "@/hooks/use-work-orders";
+import { useTeams } from "@/hooks/use-teams";
+import { upsertSystemActivity } from "@/lib/activity-automation";
+import { ProductionMaterialTab } from "@/components/job-tabs/ProductionMaterialTab";
+import { supabase } from "@/lib/supabase";
 
 export default function JobDetailsPage() {
   const { id } = useParams();
   const navigate = useNavigate();
+  const queryClient = useQueryClient();
   const { data: job, isLoading: isLoadingJob, error } = useJobDetails(id);
   const { 
     activities: jobActivities, 
@@ -44,19 +57,153 @@ export default function JobDetailsPage() {
     workOrders: jobWorkOrders, 
     fieldReports: jobFieldReports, 
     files: jobFiles, 
+    quotes: jobQuotes,
+    jobItems,
     isLoading: isLoadingRelated 
   } = useJobRelatedData(id);
   const { updateJobStatus, toggleJobStatusLock } = useJobs();
+  const { createWorkOrder } = useWorkOrders(id);
+  const { teams } = useTeams();
   const [activeTab, setActiveTab] = useState("overview");
+  const [measurementModalOpen, setMeasurementModalOpen] = useState(false);
+  const [installationModalOpen, setInstallationModalOpen] = useState(false);
+  const [finalOfferModalOpen, setFinalOfferModalOpen] = useState(false);
+  const [measurementDateTime, setMeasurementDateTime] = useState("");
+  const [measurementDurationHours, setMeasurementDurationHours] = useState("");
+  const [measurementTeamId, setMeasurementTeamId] = useState("");
+  const [measurementNote, setMeasurementNote] = useState("");
+  const [installationDateTime, setInstallationDateTime] = useState("");
+  const [installationSchedulePending, setInstallationSchedulePending] = useState(false);
   const { hasAccess, canPerformAction } = useRole();
 
   const handleStatusChange = (newStatus: JobStatus) => {
-    if (id) {
+    if (id && job) {
+      const totalPaid = jobPayments.reduce((sum, payment) => sum + (Number(payment.amount) || 0), 0);
+      const unpaidBalance = Math.max(0, (Number(job.totalPrice) || 0) - totalPaid);
+      if (newStatus === "completed" && unpaidBalance > 0.009) {
+        toast.error("Status ne može na „Završen“ dok posao nije u potpunosti isplaćen.");
+        return;
+      }
       updateJobStatus.mutate({ id, status: newStatus });
     }
   };
 
   const isLoading = isLoadingJob || isLoadingRelated;
+
+  const measurementPending = createWorkOrder.isPending || updateJobStatus.isPending;
+
+  const handleScheduleMeasurement = async () => {
+    if (!id) return;
+    if (!measurementDateTime.trim()) {
+      toast.error("Unesite datum i vreme merenja");
+      return;
+    }
+    if (!measurementDurationHours.trim() || Number(measurementDurationHours) <= 0) {
+      toast.error("Unesite procenjeno trajanje merenja (u satima)");
+      return;
+    }
+    if (!measurementTeamId.trim()) {
+      toast.error("Izaberite tim/radnika za merenje");
+      return;
+    }
+
+    const selectedTeam = teams?.find((t) => t.id === measurementTeamId);
+    const teamLabel = selectedTeam?.name ?? "Nepoznat tim";
+    const scheduledDate = measurementDateTime.slice(0, 10);
+    const dateDisplay = formatDateByAppLanguage(scheduledDate) || scheduledDate;
+    const timeDisplay = measurementDateTime.slice(11, 16) || "—";
+
+    const descriptionParts = [
+      `Zakazano merenje (${dateDisplay} ${timeDisplay})`,
+      `Procenjeno trajanje: ${measurementDurationHours}h`,
+      measurementNote.trim() ? `Napomena: ${measurementNote.trim()}` : "",
+    ].filter(Boolean);
+
+    try {
+      const created = await createWorkOrder.mutateAsync({
+        jobId: id,
+        type: "measurement",
+        description: descriptionParts.join(" | "),
+        assignedTeamId: measurementTeamId,
+        date: scheduledDate,
+        status: "pending",
+      });
+
+      await updateJobStatus.mutateAsync({ id, status: "measuring" });
+
+      await upsertSystemActivity({
+        jobId: id,
+        description: `Merenje zakazano za ${dateDisplay} u ${timeDisplay}, dodeljeno: ${teamLabel}, trajanje: ${measurementDurationHours}h${measurementNote.trim() ? `, napomena: ${measurementNote.trim()}` : ""}`,
+        systemKey: `measurement-scheduled:${created.id}`,
+      });
+
+      setMeasurementModalOpen(false);
+      setMeasurementDateTime("");
+      setMeasurementDurationHours("");
+      setMeasurementTeamId("");
+      setMeasurementNote("");
+      toast.success("Merenje je uspešno zakazano");
+    } catch (err) {
+      console.error("Schedule measurement failed:", err);
+      toast.error("Zakazivanje merenja nije uspelo. Status posla nije promenjen.");
+    }
+  };
+
+  const handleScheduleInstallation = async () => {
+    if (!id) return;
+    if (!installationDateTime.trim()) {
+      toast.error("Unesite datum i vreme ugradnje");
+      return;
+    }
+    const dateStr = installationDateTime.slice(0, 10);
+    const timeDisplay = installationDateTime.length >= 16 ? installationDateTime.slice(11, 16) : "—";
+    const dateDisplay = formatDateByAppLanguage(dateStr) || dateStr;
+    let scheduledIso: string;
+    try {
+      scheduledIso = new Date(installationDateTime).toISOString();
+    } catch {
+      toast.error("Neispravan datum ili vreme");
+      return;
+    }
+    setInstallationSchedulePending(true);
+    try {
+      const { error: jobErr } = await supabase.from("jobs").update({ scheduled_date: scheduledIso }).eq("id", id);
+      if (jobErr) throw jobErr;
+
+      const instWo = jobWorkOrders.find((w) => w.type === "installation" && w.status !== "canceled");
+      if (instWo) {
+        const { error: woErr } = await supabase
+          .from("work_orders")
+          .update({ date: dateStr })
+          .eq("id", instWo.id);
+        if (woErr) throw woErr;
+      }
+
+      const { data: authData } = await supabase.auth.getUser();
+      await upsertSystemActivity({
+        jobId: id,
+        description: `Ugradnja zakazana za ${dateDisplay} u ${timeDisplay}${instWo ? " (datum ažuriran na nalogu ugradnje)" : ""}.`,
+        systemKey: `installation-scheduled:${id}:${scheduledIso}`,
+        authorId: authData.user?.id ?? null,
+      });
+
+      await queryClient.invalidateQueries({ queryKey: ["job", id] });
+      await queryClient.invalidateQueries({ queryKey: ["work-orders", id] });
+      await queryClient.invalidateQueries({ queryKey: ["work-orders"] });
+      await queryClient.invalidateQueries({ queryKey: ["jobs"] });
+      await queryClient.invalidateQueries({ queryKey: ["activities", id] });
+
+      setInstallationModalOpen(false);
+      setInstallationDateTime("");
+      toast.success("Ugradnja je zakazana");
+    } catch (err) {
+      console.error("Schedule installation failed:", err);
+      const message = err instanceof Error ? err.message : "Nepoznata greška";
+      toast.error("Zakazivanje ugradnje nije uspelo", { description: message });
+    } finally {
+      setInstallationSchedulePending(false);
+    }
+  };
 
   if (isLoading) return <AppLayout title="Učitavanje..."><DetailSkeleton /></AppLayout>;
 
@@ -77,6 +224,7 @@ export default function JobDetailsPage() {
 
 
   const formatCurrency = (n: number) => formatCurrencyBySettings(n);
+  const estimatedPriceDisplay = job.totalPrice > 0 ? formatCurrency(job.totalPrice) : "-";
   const pendingMaterials = jobMaterials.filter(m => m.deliveryStatus !== "delivered");
   const activeWorkOrders = jobWorkOrders.filter(w => w.status !== "completed" && w.status !== "canceled");
   const totalPaid = jobPayments.reduce((sum, payment) => sum + (Number(payment.amount) || 0), 0);
@@ -101,6 +249,11 @@ export default function JobDetailsPage() {
   const installationScheduleDisplay = getJobInstallationScheduleDisplay(job, jobWorkOrders);
   const scheduleKpiValue = installationScheduleDisplay ?? "—";
   const createdAtDisplay = formatDateByAppLanguage(job.createdAt) || job.createdAt;
+  const canScheduleInstallation =
+    (canPerformAction("create_work_order") ||
+      canPerformAction("edit_work_order") ||
+      canPerformAction("update_job_status")) &&
+    job.status === "scheduled";
 
   return (
     <AppLayout>
@@ -181,6 +334,28 @@ export default function JobDetailsPage() {
                 </div>
               </div>
               <div className="flex gap-2 shrink-0">
+                {canPerformAction("create_work_order") && job.status === "accepted" && (
+                  <Button size="sm" onClick={() => setMeasurementModalOpen(true)}>
+                    Zakaži merenje
+                  </Button>
+                )}
+                {canScheduleInstallation && (
+                  <Button size="sm" variant="secondary" onClick={() => setInstallationModalOpen(true)}>
+                    Zakaži ugradnju
+                  </Button>
+                )}
+                {hasAccess("finances") && job.status === "measurement_processing" && (
+                  <Button
+                    size="sm"
+                    variant="default"
+                    onClick={() => {
+                      setActiveTab("quotes");
+                      setFinalOfferModalOpen(true);
+                    }}
+                  >
+                    Kreiraj finalnu ponudu
+                  </Button>
+                )}
                 {canPerformAction("edit_job") && (
                   <NewJobModal
                     job={job}
@@ -195,9 +370,9 @@ export default function JobDetailsPage() {
 
         {/* ── KPI Strip ── */}
         {hasAccess("finances") && (
-          <div className="grid grid-cols-3 sm:grid-cols-6 gap-2 sm:gap-3 mb-5">
+          <div className="grid grid-cols-3 sm:grid-cols-7 gap-2 sm:gap-3 mb-5">
             {[
-              { icon: DollarSign, value: formatCurrency(job.totalPrice), label: "Ukupno", color: "text-foreground" },
+              { icon: DollarSign, value: estimatedPriceDisplay, label: "Procenjena cena", color: "text-foreground" },
               { icon: DollarSign, value: `${paidPercent}%`, label: "Naplaćeno", color: "text-success" },
               { icon: DollarSign, value: formatCurrency(job.unpaidBalance), label: "Preostalo", color: job.unpaidBalance > 0 ? "text-destructive" : "text-success" },
               { icon: Package, value: String(pendingMaterials.length), label: "Čeka materijal", color: pendingMaterials.length > 0 ? "text-warning" : "text-foreground" },
@@ -239,7 +414,24 @@ export default function JobDetailsPage() {
               <TabsTrigger value="overview" className="text-xs sm:text-sm">Pregled</TabsTrigger>
               {hasAccess("activities") && <TabsTrigger value="activities" className="text-xs sm:text-sm">Aktivnosti <span className="hidden sm:inline ml-1">({jobActivities.length})</span></TabsTrigger>}
               {hasAccess("finances") && <TabsTrigger value="finances" className="text-xs sm:text-sm">Finansije</TabsTrigger>}
-              {hasAccess("material-orders") && <TabsTrigger value="materials" className="text-xs sm:text-sm">Materijal <span className="hidden sm:inline ml-1">({jobMaterials.length})</span></TabsTrigger>}
+              {hasAccess("finances") && (
+                <TabsTrigger value="quotes" className="text-xs sm:text-sm">
+                  Ponude <span className="hidden sm:inline ml-1">({jobQuotes.length})</span>
+                </TabsTrigger>
+              )}
+              {(hasAccess("material-orders") || canPerformAction("view_production_details")) && (
+                <TabsTrigger value="import-material" className="text-xs sm:text-sm">
+                  Krojna lista i nabavka <span className="hidden sm:inline ml-1">({jobItems.length})</span>
+                </TabsTrigger>
+              )}
+              {hasAccess("material-orders") && (
+                <TabsTrigger value="materials" className="text-xs sm:text-sm">
+                  Materijal{" "}
+                  <span className="hidden sm:inline ml-1">
+                    ({jobMaterials.filter(orderIsFromCutListNabavka).length}/{jobMaterials.length})
+                  </span>
+                </TabsTrigger>
+              )}
               {hasAccess("work-orders") && <TabsTrigger value="work-orders" className="text-xs sm:text-sm">Nalozi <span className="hidden sm:inline ml-1">({jobWorkOrders.length})</span></TabsTrigger>}
               {hasAccess("field-reports") && <TabsTrigger value="field-reports" className="text-xs sm:text-sm">Teren <span className="hidden sm:inline ml-1">({jobFieldReports.length})</span></TabsTrigger>}
               {hasAccess("files") && (
@@ -393,8 +585,31 @@ export default function JobDetailsPage() {
           </TabsContent>
 
           <TabsContent value="activities"><TabTransition key="activities"><ActivitiesTab activities={jobActivities} /></TabTransition></TabsContent>
-          <TabsContent value="finances"><TabTransition key="finances"><FinancesTab job={job} payments={jobPayments} /></TabTransition></TabsContent>
-          <TabsContent value="materials"><TabTransition key="materials"><MaterialOrdersTab orders={jobMaterials} jobId={id} /></TabTransition></TabsContent>
+          <TabsContent value="finances"><TabTransition key="finances"><FinancesTab job={job} payments={jobPayments} quotes={jobQuotes} /></TabTransition></TabsContent>
+          {hasAccess("finances") && (
+            <TabsContent value="quotes"><TabTransition key="quotes"><QuotesTab
+                jobId={id!}
+                quotes={jobQuotes}
+                jobQuoteLines={job.quoteLines}
+                suggestedQuoteTotal={job.totalPrice}
+                defaultPricesIncludeVat={job.pricesIncludeVat}
+                createDialogOpen={finalOfferModalOpen}
+                onCreateDialogOpenChange={setFinalOfferModalOpen}
+                createMode={finalOfferModalOpen ? "final" : "standard"}
+              /></TabTransition></TabsContent>
+          )}
+          {(hasAccess("material-orders") || canPerformAction("view_production_details")) && (
+            <TabsContent value="import-material">
+              <TabTransition key="import-material">
+                <ProductionMaterialTab jobId={id!} mode="import" />
+              </TabTransition>
+            </TabsContent>
+          )}
+          <TabsContent value="materials">
+            <TabTransition key="materials">
+              <MaterialOrdersTab orders={jobMaterials} jobId={id} alignMaterijalWithCutList />
+            </TabTransition>
+          </TabsContent>
           <TabsContent value="work-orders"><TabTransition key="work-orders"><WorkOrdersTab jobId={id!} /></TabTransition></TabsContent>
           <TabsContent value="field-reports"><TabTransition key="field-reports"><FieldReportsTab reports={jobFieldReports} /></TabTransition></TabsContent>
           {hasAccess("files") && (
@@ -402,6 +617,110 @@ export default function JobDetailsPage() {
           )}
         </Tabs>
       </PageTransition>
+      <Dialog open={measurementModalOpen} onOpenChange={setMeasurementModalOpen}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>Zakaži merenje</DialogTitle>
+            <DialogDescription>
+              Posao ostaje u statusu „Prihvaćeno“ dok ne sačuvate zakazivanje merenja.
+            </DialogDescription>
+          </DialogHeader>
+          <div className="space-y-3 py-1">
+            <div className="space-y-2">
+              <Label htmlFor="measurement-datetime">Datum i vreme *</Label>
+              <Input
+                id="measurement-datetime"
+                type="datetime-local"
+                value={measurementDateTime}
+                onChange={(e) => setMeasurementDateTime(e.target.value)}
+                disabled={measurementPending}
+              />
+            </div>
+            <div className="space-y-2">
+              <Label htmlFor="measurement-duration">Procenjeno trajanje (sati) *</Label>
+              <Input
+                id="measurement-duration"
+                type="number"
+                min="0.5"
+                step="0.5"
+                value={measurementDurationHours}
+                onChange={(e) => setMeasurementDurationHours(e.target.value)}
+                disabled={measurementPending}
+              />
+            </div>
+            <div className="space-y-2">
+              <Label>Tim / radnik *</Label>
+              <Select value={measurementTeamId} onValueChange={setMeasurementTeamId} disabled={measurementPending}>
+                <SelectTrigger>
+                  <SelectValue placeholder="Izaberite tim/radnika" />
+                </SelectTrigger>
+                <SelectContent>
+                  {(teams ?? [])
+                    .filter((t) => t.active)
+                    .map((t) => (
+                      <SelectItem key={t.id} value={t.id}>
+                        {t.name}
+                      </SelectItem>
+                    ))}
+                </SelectContent>
+              </Select>
+            </div>
+            <div className="space-y-2">
+              <Label htmlFor="measurement-note">Napomena</Label>
+              <Textarea
+                id="measurement-note"
+                value={measurementNote}
+                onChange={(e) => setMeasurementNote(e.target.value)}
+                disabled={measurementPending}
+                placeholder="Dodatne informacije za tim..."
+              />
+            </div>
+          </div>
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setMeasurementModalOpen(false)} disabled={measurementPending}>
+              Otkaži
+            </Button>
+            <Button onClick={handleScheduleMeasurement} disabled={measurementPending}>
+              {measurementPending ? "Zakazivanje..." : "Sačuvaj i zakaži"}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+      <Dialog open={installationModalOpen} onOpenChange={setInstallationModalOpen}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>Zakaži ugradnju</DialogTitle>
+            <DialogDescription>
+              Upisujete zvaničan termin ugradnje na poslu. Dodela montažnog tima i dalje ide na kartici „Nalozi“
+              (brza dodela ili izmena naloga).
+            </DialogDescription>
+          </DialogHeader>
+          <div className="space-y-3 py-1">
+            <div className="space-y-2">
+              <Label htmlFor="installation-datetime">Datum i vreme ugradnje *</Label>
+              <Input
+                id="installation-datetime"
+                type="datetime-local"
+                value={installationDateTime}
+                onChange={(e) => setInstallationDateTime(e.target.value)}
+                disabled={installationSchedulePending}
+              />
+            </div>
+          </div>
+          <DialogFooter>
+            <Button
+              variant="outline"
+              onClick={() => setInstallationModalOpen(false)}
+              disabled={installationSchedulePending}
+            >
+              Otkaži
+            </Button>
+            <Button onClick={() => void handleScheduleInstallation()} disabled={installationSchedulePending}>
+              {installationSchedulePending ? "Čuvanje…" : "Sačuvaj"}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
     </AppLayout>
   );
 }

@@ -73,7 +73,7 @@ export const MODULE_ACCESS: Record<UserRole, ModuleName[]> = {
   /** Dashboard + poslovi (evidencija uplata na poslu) + finansijski modul (tri dela: Finansije / Plaćanja / Izveštaji). */
   finance: ["dashboard", "jobs", "finances"],
   procurement: ["dashboard", "jobs", "material-orders", "suppliers", "vehicles", "files"],
-  production: ["dashboard", "jobs", "work-orders", "files"],
+  production: ["dashboard", "work-orders", "files"],
   montaza: ["dashboard", "work-orders"],
   teren: ["dashboard", "work-orders", "field-reports"],
 };

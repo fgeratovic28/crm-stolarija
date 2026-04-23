@@ -104,7 +104,7 @@ export function TeamModal({ isOpen, onClose, onSave, team }: TeamModalProps) {
   };
 
   const fieldUsers =
-    users?.filter((u) => u.role === "montaza" || u.role === "teren") || [];
+    users?.filter((u) => u.role === "montaza" || u.role === "teren" || u.role === "production") || [];
 
   return (
     <Dialog open={isOpen} onOpenChange={onClose}>
@@ -161,7 +161,7 @@ export function TeamModal({ isOpen, onClose, onSave, team }: TeamModalProps) {
             </div>
 
             <div className="grid gap-2">
-              <Label>Članovi tima (Instalateri i Serviseri)</Label>
+              <Label>Članovi tima (Montaža / Teren / Proizvodnja)</Label>
               <ScrollArea className="h-36 rounded-md border p-2">
                 <div className="space-y-2">
                   {fieldUsers.map((user) => (
@@ -183,7 +183,7 @@ export function TeamModal({ isOpen, onClose, onSave, team }: TeamModalProps) {
                     </div>
                   ))}
                   {fieldUsers.length === 0 && !usersLoading && (
-                    <p className="text-xs text-muted-foreground p-2">Nema dostupnih terenskih radnika.</p>
+                    <p className="text-xs text-muted-foreground p-2">Nema dostupnih korisnika za tim (montaža/teren/proizvodnja).</p>
                   )}
                 </div>
               </ScrollArea>

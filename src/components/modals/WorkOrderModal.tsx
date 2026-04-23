@@ -55,6 +55,7 @@ import { Separator } from "@/components/ui/separator";
 import { workOrderTypeDetailHint } from "@/lib/work-order-detail-hints";
 import { cn } from "@/lib/utils";
 import { AddressMiniMap } from "@/components/shared/AddressMiniMap";
+import { ProductionMaterialTab } from "@/components/job-tabs/ProductionMaterialTab";
 
 /** Vrednost u Select-u za RN bez tima (mapira se na null u bazi). */
 const WORK_ORDER_UNASSIGNED_TEAM = "__work_order_unassigned__";
@@ -71,12 +72,17 @@ interface WorkOrderModalProps {
 const nonCompletedJobStatuses = [
   "new",
   "quote_sent",
+  "accepted",
   "measuring",
+  "measurement_processing",
+  "ready_for_work",
+  "waiting_material",
   "in_production",
   "scheduled",
   "installation_in_progress",
   "complaint",
   "service",
+  "canceled",
 ] as const;
 
 export function WorkOrderModal({ isOpen, onClose, onSave, jobId, order, readOnly = false }: WorkOrderModalProps) {
@@ -140,13 +146,48 @@ export function WorkOrderModal({ isOpen, onClose, onSave, jobId, order, readOnly
   const { data: quoteLines, isLoading: quoteLinesLoading } = useQuery({
     queryKey: ["job-quote-lines-modal", effectiveJobId],
     queryFn: async () => {
-      const { data, error } = await supabase
+      const preferredQuotes = await supabase
+        .from("quotes")
+        .select("id, status, is_final, note, version_number, updated_at, created_at")
+        .eq("job_id", effectiveJobId)
+        .eq("status", "accepted")
+        .order("version_number", { ascending: false });
+      const fallbackQuotes = preferredQuotes.error
+        ? await supabase
+            .from("quotes")
+            .select("id, status, note, version_number, updated_at, created_at")
+            .eq("job_id", effectiveJobId)
+            .eq("status", "accepted")
+            .order("version_number", { ascending: false })
+        : null;
+      const quotesError = preferredQuotes.error && fallbackQuotes?.error ? fallbackQuotes.error : null;
+      if (quotesError) throw quotesError;
+      const acceptedQuotes = (preferredQuotes.error ? fallbackQuotes?.data : preferredQuotes.data) ?? [];
+
+      const finalAccepted = acceptedQuotes.find((q) => {
+        const isFinal = (q as { is_final?: boolean | null }).is_final === true;
+        const note = typeof q.note === "string" ? q.note.trim().toLowerCase() : "";
+        return isFinal || note.startsWith("[final]");
+      });
+      const targetQuoteId = finalAccepted?.id ?? acceptedQuotes[0]?.id;
+      if (targetQuoteId) {
+        const fromQuoteLines = await supabase
+          .from("quote_lines")
+          .select("id, description, quantity, sort_order")
+          .eq("quote_id", targetQuoteId)
+          .order("sort_order", { ascending: true });
+        if (!fromQuoteLines.error) {
+          return (fromQuoteLines.data ?? []) as { id: string; description: string; quantity: number; sort_order: number }[];
+        }
+      }
+
+      const fromJobLines = await supabase
         .from("job_quote_lines")
         .select("id, description, quantity, sort_order")
         .eq("job_id", effectiveJobId)
         .order("sort_order", { ascending: true });
-      if (error) throw error;
-      return (data ?? []) as { id: string; description: string; quantity: number; sort_order: number }[];
+      if (fromJobLines.error) throw fromJobLines.error;
+      return (fromJobLines.data ?? []) as { id: string; description: string; quantity: number; sort_order: number }[];
     },
     enabled: isOpen && readOnly && effectiveJobId.length > 0,
   });
@@ -350,6 +391,13 @@ export function WorkOrderModal({ isOpen, onClose, onSave, jobId, order, readOnly
       return d;
     }
   };
+  const formatWoDateTime = (d: string) => {
+    try {
+      return format(parseISO(d), "d. MMMM yyyy. HH:mm", { locale: sr });
+    } catch {
+      return d;
+    }
+  };
 
   const readOnlyTeamLabel =
     orderWithJob?.assignedTeamName ||
@@ -482,9 +530,17 @@ export function WorkOrderModal({ isOpen, onClose, onSave, jobId, order, readOnly
               </div>
               <div className="space-y-1 sm:text-right">
                 <p className="text-[11px] font-semibold uppercase text-muted-foreground sm:text-right flex items-center gap-1.5 sm:justify-end">
-                  <Calendar className="w-3.5 h-3.5" /> Datum naloga
+                  <Calendar className="w-3.5 h-3.5" /> Zakazan datum ugradnje
                 </p>
                 <p className="text-sm font-medium text-foreground">{formatWoDate(formData.date)}</p>
+              </div>
+              <div className="space-y-1 sm:col-span-2">
+                <p className="text-[11px] font-semibold uppercase text-muted-foreground flex items-center gap-1.5">
+                  <Calendar className="w-3.5 h-3.5" /> Datum kreiranja naloga
+                </p>
+                <p className="text-sm font-medium text-foreground">
+                  {formData.createdAt ? formatWoDateTime(formData.createdAt) : "—"}
+                </p>
               </div>
             </section>
 
@@ -552,7 +608,10 @@ export function WorkOrderModal({ isOpen, onClose, onSave, jobId, order, readOnly
             ) : quoteLines && quoteLines.length > 0 ? (
               <section className="space-y-2">
                 <h3 className="text-xs font-semibold uppercase tracking-wide text-muted-foreground flex items-center gap-1.5">
-                  <ClipboardList className="w-3.5 h-3.5" /> Obuhvat ponude (stavke)
+                  <ClipboardList className="w-3.5 h-3.5" />
+                  {formData.type === "installation"
+                    ? "Stavke finalne ponude (bez cena)"
+                    : "Obuhvat ponude (stavke)"}
                 </h3>
                 <ul className="rounded-xl border border-border divide-y divide-border bg-card">
                   {quoteLines.map((row) => (
@@ -587,6 +646,18 @@ export function WorkOrderModal({ isOpen, onClose, onSave, jobId, order, readOnly
                   </Button>
                 </div>
               </section>
+            ) : null}
+
+            {formData.type === "production" && effectiveJobId ? (
+              <>
+                <Separator />
+                <section className="space-y-2">
+                  <h3 className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">
+                    Proizvodnja i skeniranje bar kodova
+                  </h3>
+                  <ProductionMaterialTab jobId={effectiveJobId} mode="production" />
+                </section>
+              </>
             ) : null}
 
             <DialogFooter className="pt-2 sm:justify-end">
@@ -812,6 +883,15 @@ export function WorkOrderModal({ isOpen, onClose, onSave, jobId, order, readOnly
                 </SelectContent>
               </Select>
             </div>
+
+            {formData.type === "production" && (formData.jobId || effectiveJobId) ? (
+              <div className="rounded-lg border border-border bg-muted/20 p-3 space-y-2">
+                <p className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">
+                  Profili i skeniranje bar kodova
+                </p>
+                <ProductionMaterialTab jobId={formData.jobId || effectiveJobId} mode="production" />
+              </div>
+            ) : null}
             <DialogFooter>
               <Button type="button" variant="outline" onClick={onClose}>
                 Otkaži

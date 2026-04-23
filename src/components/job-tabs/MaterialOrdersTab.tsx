@@ -1,13 +1,30 @@
-import { useState } from "react";
-import { useNavigate } from "react-router-dom";
+import { useMemo, useState } from "react";
+import { Link, useNavigate } from "react-router-dom";
 import { useQueryClient } from "@tanstack/react-query";
-import { Package, CheckCircle, Truck, Clock, Edit2, Trash2, FileText, Upload, Printer, ExternalLink, ClipboardList, Loader2 } from "lucide-react";
+import {
+  Package,
+  CheckCircle,
+  Truck,
+  Clock,
+  Edit2,
+  Trash2,
+  FileText,
+  Upload,
+  Printer,
+  ExternalLink,
+  ClipboardList,
+  Loader2,
+  PackageCheck,
+  FileSearch2,
+  Banknote,
+} from "lucide-react";
 import { GenericBadge } from "@/components/shared/StatusBadge";
 import { EmptyState } from "@/components/shared/EmptyState";
 import { SectionHeader } from "@/components/shared/SectionHeader";
 import { DelayedDeliveryBadge } from "@/components/shared/OperationalBadges";
 import { ConfirmDialog } from "@/components/shared/ConfirmDialog";
 import { Button } from "@/components/ui/button";
+import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "@/components/ui/collapsible";
 import { useRole } from "@/contexts/RoleContext";
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { MaterialOrderForm } from "@/components/shared/MaterialOrderForm";
@@ -21,9 +38,12 @@ import { toast } from "sonner";
 import type { AppFile, MaterialOrder } from "@/types";
 import type { MaterialOrderFormValues } from "@/components/shared/MaterialOrderForm";
 import { labelMaterialType } from "@/lib/activity-labels";
+import { upsertSystemActivity } from "@/lib/activity-automation";
 import { exportMaterialOrderPDF } from "@/lib/export-documents";
 import { mergeDefined } from "@/lib/merge-defined";
 import { NarudzbenicaQuickEditDialog } from "@/components/modals/NarudzbenicaQuickEditDialog";
+import { MaterialOrderSefDialog } from "@/components/modals/MaterialOrderSefDialog";
+import { orderIsFromCutListNabavka, sumOrderLinesNet } from "@/lib/material-order-lines";
 
 const deliveryVariant: Record<string, "success" | "warning" | "info" | "muted"> = {
   delivered: "success",
@@ -39,23 +59,45 @@ const deliveryLabels: Record<string, string> = {
   partial: "Delimično",
 };
 
-export function MaterialOrdersTab({ orders: initialOrders, jobId }: { orders?: MaterialOrder[]; jobId?: string }) {
+export function MaterialOrdersTab({
+  orders: initialOrders,
+  jobId,
+  /** Na stranici posla: prikaži prvo nabavku iz krojne liste; ostale narudžbine u zasebnom bloku. */
+  alignMaterijalWithCutList = false,
+}: {
+  orders?: MaterialOrder[];
+  jobId?: string;
+  alignMaterijalWithCutList?: boolean;
+}) {
   const formatCurrency = (n: number) => formatCurrencyBySettings(n);
   const navigate = useNavigate();
   const queryClient = useQueryClient();
   const { canPerformAction } = useRole();
-  const { createOrder, updateOrder, deleteOrder, orders: hookedOrders, isLoading: ordersLoading } = useMaterialOrders(jobId);
+  const { createOrder, updateOrder, deleteOrder, orders: hookedOrders, isLoading: ordersLoading } =
+    useMaterialOrders(jobId);
   const { uploadFile, deleteFile } = useFiles();
   const { user } = useAuthStore();
 
   const [isModalOpen, setIsModalOpen] = useState(false);
   const [editingOrder, setEditingOrder] = useState<MaterialOrder | null>(null);
   const [nbQuickOrder, setNbQuickOrder] = useState<MaterialOrder | null>(null);
+  const [otherOrdersOpen, setOtherOrdersOpen] = useState(false);
+  const [sefDialogOrder, setSefDialogOrder] = useState<MaterialOrder | null>(null);
 
-  const displayOrders = initialOrders || hookedOrders || [];
+  const displayOrdersAll = initialOrders || hookedOrders || [];
+  const splitByCutList = !!(alignMaterijalWithCutList && jobId);
+  const { procurementOrders, otherJobOrders } = useMemo(() => {
+    if (!splitByCutList) {
+      return { procurementOrders: displayOrdersAll, otherJobOrders: [] as MaterialOrder[] };
+    }
+    const proc = displayOrdersAll.filter(orderIsFromCutListNabavka);
+    const other = displayOrdersAll.filter((o) => !orderIsFromCutListNabavka(o));
+    return { procurementOrders: proc, otherJobOrders: other };
+  }, [displayOrdersAll, splitByCutList]);
+  const displayOrders = procurementOrders;
   const isLoading = !initialOrders && ordersLoading;
 
-  const orderIds = displayOrders.map((o) => o.id);
+  const orderIds = displayOrdersAll.map((o) => o.id);
   const { data: attachmentsByOrder = {}, isLoading: attachmentsLoading } = useMaterialOrderAttachments(orderIds);
 
   const handleCreate = (data: MaterialOrderFormValues) => {
@@ -125,6 +167,26 @@ export function MaterialOrdersTab({ orders: initialOrders, jobId }: { orders?: M
     deleteFile.mutate(file.id);
   };
 
+  const markMaterialDelivered = (o: MaterialOrder) => {
+    const today = new Date().toISOString().slice(0, 10);
+    updateOrder.mutate(
+      mergeDefined(o, {
+        deliveryStatus: "delivered" as const,
+        deliveryDate: today,
+        deliveryVerified: true,
+      }) as MaterialOrder,
+    );
+  };
+
+  const togglePaidStatus = (o: MaterialOrder) => {
+    updateOrder.mutate(mergeDefined(o, { paid: !o.paid }) as MaterialOrder, {
+      onError: (err) => {
+        const message = err instanceof Error ? err.message : "Ažuriranje nije uspelo";
+        toast.error("Greška pri plaćanju", { description: message });
+      },
+    });
+  };
+
   const handleExportPdf = async (order: MaterialOrder) => {
     try {
       await exportMaterialOrderPDF(order, {
@@ -146,31 +208,14 @@ export function MaterialOrdersTab({ orders: initialOrders, jobId }: { orders?: M
     }
   };
 
-  return (
-    <div>
-      <SectionHeader
-        title="Narudžbine materijala"
-        subtitle={`${displayOrders.length} narudžbin${displayOrders.length === 1 ? "a" : "e"}`}
-        icon={Package}
-        actions={canPerformAction("create_order") ? <Button size="sm" onClick={openCreate}>Nova narudžbina</Button> : undefined}
-      />
-      {isLoading ? (
-        <CardListSkeleton count={3} />
-      ) : displayOrders.length === 0 ? (
-        <EmptyState
-          icon={Package}
-          title="Nema narudžbina materijala"
-          description="Nema evidentiranih narudžbina za trenutne filtere ili posao."
-          actionLabel={canPerformAction("create_order") ? "Nova narudžbina" : undefined}
-          onAction={openCreate}
-        />
-      ) : (
-        <div className="grid gap-4">
-          {displayOrders.map((o) => {
-            const relatedJob = o.job;
-            const attachments = attachmentsByOrder[o.id] ?? [];
-            return (
-              <div key={o.id} className="bg-card rounded-xl border border-border p-4 sm:p-5 hover:shadow-sm transition-shadow">
+  const renderOrderCard = (o: MaterialOrder) => {
+    const relatedJob = o.job;
+    const attachments = attachmentsByOrder[o.id] ?? [];
+    const fromLines = o.nbLines && o.nbLines.length > 0 ? sumOrderLinesNet(o.nbLines) : 0;
+    const headerNet = Number(o.price ?? o.supplierPrice ?? 0) || 0;
+    const cardPrice = fromLines > 0 ? fromLines : headerNet;
+    return (
+      <div key={o.id} className="bg-card rounded-xl border border-border p-4 sm:p-5 hover:shadow-sm transition-shadow">
                 <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 mb-3">
                   <div className="flex items-center gap-3">
                     <div className="w-9 h-9 rounded-lg bg-primary/10 flex items-center justify-center shrink-0">
@@ -195,6 +240,9 @@ export function MaterialOrdersTab({ orders: initialOrders, jobId }: { orders?: M
                   <div className="flex items-center gap-1.5 flex-wrap">
                     <GenericBadge label={deliveryLabels[o.deliveryStatus]} variant={deliveryVariant[o.deliveryStatus]} />
                     <GenericBadge label={o.paid ? "Plaćeno" : "Neplaćeno"} variant={o.paid ? "success" : "danger"} />
+                    {o.sefReconciliationAt ? (
+                      <GenericBadge label="SEF provereno" variant="success" />
+                    ) : null}
                     <DelayedDeliveryBadge order={o} />
                     <div className="flex items-center gap-1 ml-2">
                       <Button
@@ -244,13 +292,71 @@ export function MaterialOrdersTab({ orders: initialOrders, jobId }: { orders?: M
                   </div>
                   <div>
                     <span className="text-muted-foreground text-xs">Cena</span>
-                    <p className="font-medium">{formatCurrency(o.price || o.supplierPrice)}</p>
+                    <p className="font-medium">{formatCurrency(cardPrice)}</p>
                   </div>
                   <div>
                     <span className="text-muted-foreground text-xs">Kontakt</span>
                     <p className="font-medium text-xs sm:text-sm">{o.supplierContact}</p>
                   </div>
                 </div>
+
+                {canPerformAction("create_order") && (
+                  <div className="mt-3 flex min-w-0 items-center justify-between gap-3">
+                    <div className="flex min-w-0 flex-wrap gap-2">
+                      {o.deliveryStatus !== "delivered" ? (
+                        <ConfirmDialog
+                          variant="warning"
+                          title="Potvrditi prijem materijala?"
+                          description="Status isporuke biće „Isporučeno“, datum isporuke — danas. Možete kasnije ispraviti u izmeni narudžbine ako je potrebno."
+                          confirmLabel="Stigao materijal"
+                          cancelLabel="Otkaži"
+                          trigger={
+                            <Button type="button" variant="secondary" size="sm" className="h-8 text-xs gap-1.5">
+                              <PackageCheck className="w-3.5 h-3.5" />
+                              Stigao materijal
+                            </Button>
+                          }
+                          onConfirm={() => markMaterialDelivered(o)}
+                        />
+                      ) : null}
+                      <Button
+                        type="button"
+                        variant="outline"
+                        size="sm"
+                        className="h-8 text-xs gap-1.5"
+                        onClick={() => setSefDialogOrder(o)}
+                      >
+                        <FileSearch2 className="w-3.5 h-3.5" />
+                        SEF i provera
+                      </Button>
+                    </div>
+                    <Button
+                      type="button"
+                      variant={o.paid ? "outline" : "secondary"}
+                      size="sm"
+                      className="h-auto min-h-8 shrink-0 py-1.5 text-left text-xs gap-1.5 whitespace-normal sm:whitespace-nowrap"
+                      disabled={updateOrder.isPending}
+                      title={
+                        o.paid
+                          ? "U evidenciji označi da porudžbina još nije plaćena"
+                          : "U evidenciji označi da je porudžbina plaćena"
+                      }
+                      onClick={() => togglePaidStatus(o)}
+                    >
+                      <Banknote className="w-3.5 h-3.5 shrink-0" />
+                      {o.paid ? "Označi kao neplaćeno" : "Označi kao plaćeno"}
+                    </Button>
+                  </div>
+                )}
+
+                {o.supplierComplaintNote?.trim() ? (
+                  <p className="text-xs text-muted-foreground mt-2 border-l-2 border-amber-500/60 pl-2">
+                    <span className="font-medium text-foreground">Reklamacija (sačuvano):</span>{" "}
+                    {o.supplierComplaintNote.length > 200
+                      ? `${o.supplierComplaintNote.slice(0, 200)}…`
+                      : o.supplierComplaintNote}
+                  </p>
+                ) : null}
 
                 <div className="mt-4 border-t border-border pt-3 space-y-2">
                   <div className="flex items-center justify-between gap-2">
@@ -358,10 +464,74 @@ export function MaterialOrdersTab({ orders: initialOrders, jobId }: { orders?: M
                   </span>
                   {o.barcode && <span>Barkod: {o.barcode}</span>}
                 </div>
-              </div>
-            );
-          })}
-        </div>
+      </div>
+    );
+  };
+
+  const emptyProcurementDescription =
+    splitByCutList && jobId
+      ? "Porudžbine profila iz krojne liste kreirate u tabu „Krojna lista i nabavka“ (upload i „Kreiraj porudžbine“). Ovde pratite isporuku i priloge."
+      : "Nema evidentiranih narudžbina za trenutne filtere ili posao.";
+
+  return (
+    <div>
+      <SectionHeader
+        title={splitByCutList ? "Nabavka profila (iz krojne liste)" : "Narudžbine materijala"}
+        subtitle={
+          splitByCutList
+            ? `${displayOrders.length} porudžbin${displayOrders.length === 1 ? "a" : "e"} vezan${displayOrders.length === 1 ? "a" : "e"} za nabavku profila${
+                otherJobOrders.length > 0 ? ` · još ${otherJobOrders.length} drugih narudžbina za posao` : ""
+              }`
+            : `${displayOrdersAll.length} narudžbin${displayOrdersAll.length === 1 ? "a" : "e"}`
+        }
+        icon={Package}
+        actions={canPerformAction("create_order") ? <Button size="sm" onClick={openCreate}>Nova narudžbina</Button> : undefined}
+      />
+      {splitByCutList && (
+        <p className="text-xs text-muted-foreground -mt-2 mb-4">
+          Ovaj tab je usklađen sa „Krojnom listom i nabavkom“: prvo su porudžbine profila. Ručno dodate porudžbine drugih vrsta nalaze se ispod (ako postoje). Kompletan spisak svih narudžbina:{" "}
+          <Link to="/material-orders" className="text-primary hover:underline">
+            modul Nabavka
+          </Link>
+          .
+        </p>
+      )}
+      {isLoading ? (
+        <CardListSkeleton count={3} />
+      ) : displayOrders.length === 0 && !splitByCutList ? (
+        <EmptyState
+          icon={Package}
+          title="Nema narudžbina materijala"
+          description={emptyProcurementDescription}
+          actionLabel={canPerformAction("create_order") ? "Nova narudžbina" : undefined}
+          onAction={openCreate}
+        />
+      ) : displayOrders.length === 0 && splitByCutList ? (
+        <EmptyState
+          icon={Package}
+          title="Nema porudžbina profila za ovaj posao"
+          description={emptyProcurementDescription}
+        />
+      ) : (
+        <div className="grid gap-4">{displayOrders.map((o) => renderOrderCard(o))}</div>
+      )}
+
+      {splitByCutList && otherJobOrders.length > 0 && (
+        <Collapsible open={otherOrdersOpen} onOpenChange={setOtherOrdersOpen} className="mt-6">
+          <div className="flex items-center justify-between gap-2 rounded-lg border border-border bg-muted/20 px-3 py-2">
+            <p className="text-sm font-medium text-foreground">
+              Ostale narudžbine materijala za posao <span className="text-muted-foreground font-normal">({otherJobOrders.length})</span>
+            </p>
+            <CollapsibleTrigger asChild>
+              <Button type="button" variant="outline" size="sm" className="h-8 text-xs shrink-0">
+                {otherOrdersOpen ? "Skupi" : "Rasiri"}
+              </Button>
+            </CollapsibleTrigger>
+          </div>
+          <CollapsibleContent className="pt-3">
+            <div className="grid gap-4">{otherJobOrders.map((o) => renderOrderCard(o))}</div>
+          </CollapsibleContent>
+        </Collapsible>
       )}
 
       <Dialog open={isModalOpen} onOpenChange={setIsModalOpen}>
@@ -394,6 +564,37 @@ export function MaterialOrdersTab({ orders: initialOrders, jobId }: { orders?: M
           });
         }}
         isLoading={updateOrder.isPending}
+      />
+
+      <MaterialOrderSefDialog
+        order={sefDialogOrder}
+        open={sefDialogOrder !== null}
+        onOpenChange={(open) => {
+          if (!open) setSefDialogOrder(null);
+        }}
+        jobId={jobId}
+        userId={user?.id}
+        canUpload={canPerformAction("upload_file")}
+        uploadFile={uploadFile}
+        onSaveOrder={(next) => {
+          updateOrder.mutate(next, {
+            onSuccess: () => setSefDialogOrder(next),
+          });
+        }}
+        onApplyInvoiceReconciliation={async (next, meta) => {
+          await updateOrder.mutateAsync(next);
+          if (next.jobId) {
+            await upsertSystemActivity({
+              jobId: next.jobId,
+              description: `SEF faktura: usklađena narudžbina materijala (${labelMaterialType(next.materialType)} — ${next.supplier}${meta.xmlDocumentNumber ? `, br. fakture ${meta.xmlDocumentNumber}` : ""}). Nabavni iznosi i količine ažurirani. Status isporuke: ${next.deliveryStatus === "delivered" ? "Primljeno" : "Delimično"}.`,
+              systemKey: `material-order-sef-apply:${next.id}:${Date.now()}`,
+            });
+          }
+        }}
+        isSaving={updateOrder.isPending}
+        onFilesChanged={() => {
+          void queryClient.invalidateQueries({ queryKey: ["material-order-files"] });
+        }}
       />
     </div>
   );

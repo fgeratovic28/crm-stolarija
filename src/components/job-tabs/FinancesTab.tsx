@@ -5,22 +5,30 @@ import { Badge } from "@/components/ui/badge";
 import { RecordPaymentModal } from "@/components/modals/RecordPaymentModal";
 import { useRole } from "@/contexts/RoleContext";
 import { formatCurrencyBySettings } from "@/lib/app-settings";
-import type { Job, Payment } from "@/types";
+import type { Job, Payment, Quote } from "@/types";
 
-export function FinancesTab({ job, payments }: { job: Job; payments: Payment[] }) {
+export function FinancesTab({ job, payments, quotes = [] }: { job: Job; payments: Payment[]; quotes?: Quote[] }) {
   const formatCurrency = (n: number) => formatCurrencyBySettings(n);
   const { canPerformAction } = useRole();
+  const latestQuote = [...quotes].sort(
+    (a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime(),
+  )[0];
+  const acceptedQuote = [...quotes]
+    .filter((q) => q.status === "accepted")
+    .sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime())[0];
+  const paymentDefaultIncludesVat = (acceptedQuote ?? latestQuote)?.pricesIncludeVat ?? job.pricesIncludeVat;
 
   // Dynamic balance calculation
   const totalPaid = payments.reduce((sum, p) => sum + p.amount, 0);
   const remainingBalance = job.totalPrice - totalPaid;
+  const estimatedPriceDisplay = job.totalPrice > 0 ? formatCurrency(job.totalPrice) : "-";
 
   return (
     <div className="space-y-6">
       <div className="grid grid-cols-2 lg:grid-cols-4 gap-3">
-        <StatCard title="Cena (bez PDV-a)" value={formatCurrency(job.priceWithoutVat)} icon={DollarSign} />
+        <StatCard title="Procenjena cena (interno)" value={estimatedPriceDisplay} icon={DollarSign} />
+        <StatCard title="Osnovica (bez PDV-a)" value={formatCurrency(job.priceWithoutVat)} icon={DollarSign} />
         <StatCard title="PDV (20%)" value={formatCurrency(job.vatAmount)} icon={DollarSign} />
-        <StatCard title="Ukupno (sa PDV-om)" value={formatCurrency(job.totalPrice)} icon={DollarSign} />
         <StatCard title="Preostalo" value={formatCurrency(remainingBalance)} icon={DollarSign} />
       </div>
       <div className="flex flex-col sm:flex-row sm:items-start gap-2 sm:gap-3">
@@ -42,7 +50,9 @@ export function FinancesTab({ job, payments }: { job: Job; payments: Payment[] }
         <div className="p-4 sm:p-5 border-b border-border flex flex-col sm:flex-row sm:items-center justify-between gap-2">
           <div className="flex items-center gap-3">
             <h3 className="font-semibold text-foreground text-sm">Istorija plaćanja</h3>
-            {canPerformAction("record_payment") && <RecordPaymentModal jobId={job.id} />}
+            {canPerformAction("record_payment") && (
+              <RecordPaymentModal jobId={job.id} defaultIncludesVat={paymentDefaultIncludesVat} />
+            )}
           </div>
           <div className="text-sm text-muted-foreground flex items-center gap-4">
             <div>

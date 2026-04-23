@@ -15,7 +15,7 @@ export async function htmlDocumentToPdfBlob(html: string, options?: HtmlToPdfOpt
   const [{ default: html2canvas }, jspdfMod] = await Promise.all([import("html2canvas"), import("jspdf")]);
   const { jsPDF } = jspdfMod;
 
-  const scale = options?.scale ?? 1.15;
+  const scale = options?.scale ?? 1.35;
   const jpegQuality = options?.jpegQuality ?? 0.82;
 
   const iframe = document.createElement("iframe");
@@ -24,7 +24,7 @@ export async function htmlDocumentToPdfBlob(html: string, options?: HtmlToPdfOpt
     position: "fixed",
     left: "-12000px",
     top: "0",
-    width: "820px",
+    width: "900px",
     border: "none",
     background: "#fff",
   });
@@ -35,7 +35,27 @@ export async function htmlDocumentToPdfBlob(html: string, options?: HtmlToPdfOpt
   d.write(html);
   d.close();
 
-  await new Promise((r) => setTimeout(r, 500));
+  const settleDocument = async () => {
+    const imgs = Array.from(d.images);
+    await Promise.all(
+      imgs.map(
+        (img) =>
+          img.complete
+            ? Promise.resolve()
+            : new Promise<void>((resolve) => {
+                img.onload = () => resolve();
+                img.onerror = () => resolve();
+              }),
+      ),
+    );
+    try {
+      await d.fonts?.ready;
+    } catch {
+      /* ignore */
+    }
+    await new Promise((r) => setTimeout(r, 400));
+  };
+  await settleDocument();
 
   const body = d.body;
   const canvas = await html2canvas(body, {
@@ -43,8 +63,20 @@ export async function htmlDocumentToPdfBlob(html: string, options?: HtmlToPdfOpt
     useCORS: true,
     logging: false,
     backgroundColor: "#ffffff",
-    windowWidth: body.scrollWidth,
+    windowWidth: Math.max(body.scrollWidth, 880),
     windowHeight: body.scrollHeight,
+    onclone: (clonedDoc) => {
+      const root = clonedDoc.body;
+      if (!root) return;
+      root.style.overflow = "visible";
+      root.style.height = "auto";
+      root.querySelectorAll("table.nb-t").forEach((node) => {
+        const t = node as HTMLTableElement;
+        t.style.tableLayout = "fixed";
+        t.style.width = "100%";
+        t.style.borderCollapse = "collapse";
+      });
+    },
   });
 
   document.body.removeChild(iframe);

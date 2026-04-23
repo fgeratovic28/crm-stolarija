@@ -17,6 +17,9 @@ import { StatusBadge } from "@/components/shared/StatusBadge";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { useJobs, useFinancesData } from "@/hooks/use-jobs";
 import { Button } from "@/components/ui/button";
+import { Input } from "@/components/ui/input";
+import { Label } from "@/components/ui/label";
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { ExportModal } from "@/components/modals/ExportModal";
 import { cn } from "@/lib/utils";
 
@@ -26,13 +29,20 @@ const filterConfigs: FilterConfig[] = [
     key: "status",
     label: "Status posla",
     options: [
+      { value: "new", label: "Upit" },
+      { value: "quote_sent", label: "Ponuda poslata" },
+      { value: "accepted", label: "Prihvaćeno" },
       { value: "measuring", label: "Merenje" },
+      { value: "measurement_processing", label: "Obrada mera" },
+      { value: "ready_for_work", label: "Spremno za rad" },
+      { value: "waiting_material", label: "Čeka materijal" },
       { value: "in_production", label: "U proizvodnji" },
       { value: "scheduled", label: "Čeka ugradnju" },
       { value: "installation_in_progress", label: "Ugradnja u toku" },
       { value: "completed", label: "Završen" },
       { value: "complaint", label: "Reklamacija" },
       { value: "service", label: "Servis" },
+      { value: "canceled", label: "Otkazan" },
     ],
   },
 ];
@@ -46,6 +56,21 @@ const tooltipStyle = {
 
 const formatRSD = (v: number) => new Intl.NumberFormat("sr-RS").format(v) + " RSD";
 const formatAxis = (v: number) => `${(v / 1000).toFixed(0)}k`;
+const monthOptions = [
+  { value: "all", label: "Svi meseci" },
+  { value: "1", label: "Januar" },
+  { value: "2", label: "Februar" },
+  { value: "3", label: "Mart" },
+  { value: "4", label: "April" },
+  { value: "5", label: "Maj" },
+  { value: "6", label: "Jun" },
+  { value: "7", label: "Jul" },
+  { value: "8", label: "Avgust" },
+  { value: "9", label: "Septembar" },
+  { value: "10", label: "Oktobar" },
+  { value: "11", label: "Novembar" },
+  { value: "12", label: "Decembar" },
+] as const;
 
 type FinanceTab = "overview" | "payments" | "reports";
 
@@ -59,6 +84,10 @@ export default function FinancesPage() {
   const { jobs, isLoading: jobsLoading } = useJobs();
   const { data: summary, isLoading: summaryLoading } = useFinancesData();
   const [filters, setFilters] = useState<Record<string, string>>({ payment: "all", status: "all" });
+  const [paymentYear, setPaymentYear] = useState("all");
+  const [paymentMonth, setPaymentMonth] = useState("all");
+  const [paymentDateFrom, setPaymentDateFrom] = useState("");
+  const [paymentDateTo, setPaymentDateTo] = useState("");
   const [exportOpen, setExportOpen] = useState(false);
 
   useEffect(() => {
@@ -96,6 +125,34 @@ export default function FinancesPage() {
       const matchStatus = filters.status === "all" || j.status === filters.status;
       return matchPayment && matchStatus;
     }) || [];
+
+  const availablePaymentYears = Array.from(
+    new Set(
+      (jobs ?? [])
+        .flatMap((j) => j.payments ?? [])
+        .map((p) => new Date(p.date).getFullYear())
+        .filter((y) => Number.isFinite(y))
+        .sort((a, b) => b - a),
+    ),
+  );
+
+  const periodFiltered = filtered.filter((j) => {
+    const payments = j.payments ?? [];
+    const hasPeriodFilter =
+      paymentYear !== "all" || paymentMonth !== "all" || paymentDateFrom.trim() || paymentDateTo.trim();
+    if (!hasPeriodFilter) return true;
+    if (payments.length === 0) return false;
+
+    return payments.some((p) => {
+      const d = new Date(p.date);
+      if (Number.isNaN(d.getTime())) return false;
+      if (paymentYear !== "all" && d.getFullYear() !== Number(paymentYear)) return false;
+      if (paymentMonth !== "all" && d.getMonth() + 1 !== Number(paymentMonth)) return false;
+      if (paymentDateFrom && p.date < paymentDateFrom) return false;
+      if (paymentDateTo && p.date > paymentDateTo) return false;
+      return true;
+    });
+  });
 
   if (loading) {
     return (
@@ -146,7 +203,8 @@ export default function FinancesPage() {
               Kartice i graf prikazuju iste agregate kao na kontrolnoj tabli; ovde su naglašeni trend (mesec) i stanje naplate.
             </p>
             <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3">
-              <StatCard title="Ukupno fakturisano" value={formatRSD(summary?.totalRevenue || 0)} icon={Receipt} />
+              <StatCard title="Ukupno procenjeno (interno)" value={formatRSD(summary?.estimatedTotal || 0)} icon={Receipt} />
+              <StatCard title="Ukupno finansijski aktivno" value={formatRSD(summary?.totalRevenue || 0)} icon={Receipt} />
               <StatCard title="Ukupno naplaćeno" value={formatRSD(summary?.totalPaid || 0)} icon={TrendingUp} />
               <StatCard title="Preostalo za naplatu" value={formatRSD(summary?.totalUnpaid || 0)} icon={TrendingDown} />
               <StatCard title="Stopa naplate" value={`${summary?.collectionRate || 0}%`} icon={DollarSign} />
@@ -193,8 +251,64 @@ export default function FinancesPage() {
                   values={filters}
                   onChange={(k, v) => setFilters((p) => ({ ...p, [k]: v }))}
                 />
+                <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-3">
+                  <div className="space-y-1">
+                    <Label className="text-xs text-muted-foreground">Godina plaćanja</Label>
+                    <Select value={paymentYear} onValueChange={setPaymentYear}>
+                      <SelectTrigger>
+                        <SelectValue placeholder="Sve godine" />
+                      </SelectTrigger>
+                      <SelectContent>
+                        <SelectItem value="all">Sve godine</SelectItem>
+                        {availablePaymentYears.map((year) => (
+                          <SelectItem key={year} value={String(year)}>
+                            {year}
+                          </SelectItem>
+                        ))}
+                      </SelectContent>
+                    </Select>
+                  </div>
+                  <div className="space-y-1">
+                    <Label className="text-xs text-muted-foreground">Mesec plaćanja</Label>
+                    <Select value={paymentMonth} onValueChange={setPaymentMonth}>
+                      <SelectTrigger>
+                        <SelectValue placeholder="Svi meseci" />
+                      </SelectTrigger>
+                      <SelectContent>
+                        {monthOptions.map((m) => (
+                          <SelectItem key={m.value} value={m.value}>
+                            {m.label}
+                          </SelectItem>
+                        ))}
+                      </SelectContent>
+                    </Select>
+                  </div>
+                  <div className="space-y-1">
+                    <Label className="text-xs text-muted-foreground">Kalendar od</Label>
+                    <Input type="date" value={paymentDateFrom} onChange={(e) => setPaymentDateFrom(e.target.value)} />
+                  </div>
+                  <div className="space-y-1">
+                    <Label className="text-xs text-muted-foreground">Kalendar do</Label>
+                    <Input type="date" value={paymentDateTo} onChange={(e) => setPaymentDateTo(e.target.value)} />
+                  </div>
+                </div>
+                <div className="flex justify-end">
+                  <Button
+                    type="button"
+                    variant="ghost"
+                    size="sm"
+                    onClick={() => {
+                      setPaymentYear("all");
+                      setPaymentMonth("all");
+                      setPaymentDateFrom("");
+                      setPaymentDateTo("");
+                    }}
+                  >
+                    Reset perioda
+                  </Button>
+                </div>
               </div>
-              {filtered.length === 0 ? (
+              {periodFiltered.length === 0 ? (
                 <div className="p-6">
                   <EmptyState icon={DollarSign} title="Nema rezultata" description="Nema poslova za zadate filtere." />
                 </div>
@@ -204,7 +318,7 @@ export default function FinancesPage() {
                     <table className="w-full">
                       <thead>
                         <tr className="border-b border-border">
-                          {["Posao #", "Kupac", "Status", "Fakturisano", "Uplaćeno", "Neplaćeno"].map((h) => (
+                          {["Posao #", "Kupac", "Status", "Procenjena cena", "Uplaćeno", "Neplaćeno"].map((h) => (
                             <th key={h} className="text-left text-xs font-medium text-muted-foreground px-4 lg:px-5 py-3">
                               {h}
                             </th>
@@ -212,7 +326,7 @@ export default function FinancesPage() {
                         </tr>
                       </thead>
                       <tbody>
-                        {filtered.map((j) => (
+                        {periodFiltered.map((j) => (
                           <tr
                             key={j.id}
                             className="border-b border-border last:border-0 hover:bg-muted/50 cursor-pointer transition-colors"
@@ -241,7 +355,7 @@ export default function FinancesPage() {
                     </table>
                   </div>
                   <div className="sm:hidden divide-y divide-border">
-                    {filtered.map((j) => (
+                    {periodFiltered.map((j) => (
                       <div
                         key={j.id}
                         className="p-4 cursor-pointer hover:bg-muted/30"

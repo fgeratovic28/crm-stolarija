@@ -1,15 +1,23 @@
 import { supabase } from "@/lib/supabase";
 import { fetchJobByIdForExport } from "@/hooks/use-jobs";
-import { formatDateBySettings, formatDateTimeBySettings } from "@/lib/app-settings";
+import {
+  formatCurrencyBySettings,
+  formatDateBySettings,
+  formatDateTimeBySettings,
+  readAppSettingsCache,
+} from "@/lib/app-settings";
 import {
   buildMaterialOrderPdfDisplayName,
   upsertMaterialOrderGeneratedPdf,
   type MaterialOrderPdfUpsertResult,
 } from "@/lib/material-order-pdf-upload";
+import { upsertJobScopedGeneratedPdf } from "@/lib/job-generated-pdf-upload";
 import { buildNarudzbenicaDocumentHtml } from "@/lib/narudzbenica-html";
+import { pdfMemorandumHeaderHtml } from "@/lib/pdf-memorandum";
 import { PDF_DOCUMENT_STYLES } from "@/lib/pdf-document-theme";
+import { upsertQuoteGeneratedPdf } from "@/lib/quote-generated-pdf-upload";
 import { mapMaterialOrderRow } from "@/lib/map-material-order";
-import type { FieldReport, FieldReportDetails, MaterialOrder, WorkOrder } from "@/types";
+import type { FieldReport, FieldReportDetails, Job, MaterialOrder, Quote, WorkOrder } from "@/types";
 import { jobPrimaryPhone } from "@/lib/job-contact-phone";
 import { labelWorkOrderType } from "@/lib/activity-labels";
 
@@ -36,7 +44,7 @@ async function fetchMaterialOrderForExport(orderId: string): Promise<MaterialOrd
     .from("material_orders")
     .select(`
       *,
-      suppliers (id, name, contact_person, address),
+      suppliers (id, name, contact_person, address, phone, email, bank_account, pib, nb_shipping_method),
       jobs (id, job_number)
     `)
     .eq("id", orderId)
@@ -60,7 +68,7 @@ async function fetchFieldReportForExport(reportId: string): Promise<FieldReport 
     .from("field_reports")
     .select(`
       *,
-      work_orders (
+      work_orders!field_reports_work_order_id_fkey (
         id,
         job_id,
         type,
@@ -156,7 +164,14 @@ function openPrintWindow(html: string) {
 
 const docStyles = PDF_DOCUMENT_STYLES;
 
-export async function exportFieldReportPDF(report: FieldReport) {
+export type GeneratedPdfSaveOptions = {
+  attachGeneratedPdf?: boolean;
+  userId?: string;
+  onPdfAttached?: (result: "created" | "updated") => void;
+  onPdfAttachFailed?: (message: string) => void;
+};
+
+export async function exportFieldReportPDF(report: FieldReport, options?: GeneratedPdfSaveOptions) {
   const reportFromDb = await fetchFieldReportForExport(report.id);
   const reportData = reportFromDb ?? report;
   const job = (await fetchJobByIdForExport(reportData.jobId)) ?? null;
@@ -198,7 +213,9 @@ export async function exportFieldReportPDF(report: FieldReport) {
   const html = `<!DOCTYPE html><html><head><meta charset="utf-8"><title>Terenski izveštaj</title>
 <style>${docStyles}</style></head><body>
 <div class="doc-wrap">
+  ${pdfMemorandumHeaderHtml()}
   <div class="doc-accent"></div>
+  <div class="doc-sheet">
   <div class="doc-header">
     <div class="doc-brand">
       <div class="doc-brand-line">Stolarija Kovačević · Interni dokument</div>
@@ -215,7 +232,6 @@ export async function exportFieldReportPDF(report: FieldReport) {
   <div class="section">
     <div class="section-title">Status</div>
     <div class="badge-row">
-      <span class="badge ${reportData.arrived ? "badge-ok" : "badge-warn"}">${reportData.arrived ? "Stigao na teren" : "Nije stigao"}</span>
       <span class="badge ${reportData.jobCompleted ? "badge-ok" : "badge-warn"}">${reportData.jobCompleted ? "Posao završen" : "Nezavršen"}</span>
       <span class="badge ${reportData.everythingOk ? "badge-ok" : "badge-bad"}">${reportData.everythingOk ? "Sve u redu" : "Ima problema"}</span>
       ${reportData.siteCanceled ? '<span class="badge badge-bad">Teren otkazan</span>' : ""}
@@ -270,7 +286,7 @@ export async function exportFieldReportPDF(report: FieldReport) {
   ${reportData.additionalNeeds.length > 0 ? `
   <div class="section">
     <div class="section-title">Dodatne potrebe</div>
-    <ul style="margin:0;padding-left:18px">${reportData.additionalNeeds.map((n) => `<li>${escapeHtml(n)}</li>`).join("")}</ul>
+    <ul class="doc-list">${reportData.additionalNeeds.map((n) => `<li>${escapeHtml(n)}</li>`).join("")}</ul>
   </div>` : ""}
 
   ${reportData.generalNotes ? `
@@ -293,13 +309,40 @@ export async function exportFieldReportPDF(report: FieldReport) {
   </div>` : ""}
 
   <div class="footer">Stolarija Kovačević d.o.o. · Terenski izveštaj · ${today()}</div>
+  </div>
 </div>
 </body></html>`;
 
   openPrintWindow(html);
+
+  if (options?.attachGeneratedPdf && options.userId && reportData.jobId) {
+    void (async () => {
+      try {
+        const { htmlDocumentToPdfBlob } = await import("@/lib/pdf-from-html");
+        const blob = await htmlDocumentToPdfBlob(html);
+        const jn = job?.jobNumber?.trim().replace(/[^\w\u0400-\u04FF-]/g, "_") || "posao";
+        const idShort = reportData.id.replace(/-/g, "").slice(0, 8).toUpperCase();
+        const displayFilename = `Terenski_izvestaj_${jn}_${idShort}.pdf`;
+        const result = await upsertJobScopedGeneratedPdf({
+          jobId: reportData.jobId,
+          storageLeaf: `terenski-izvestaj-${reportData.id}.pdf`,
+          blob,
+          uploadedBy: options.userId!,
+          displayFilename,
+          category: "reports",
+          activityDescription: `PDF terenskog izveštaja (štampa): ${displayFilename}`,
+          systemKey: `field-report-autopdf:${reportData.id}`,
+        });
+        options.onPdfAttached?.(result);
+      } catch (e) {
+        const msg = e instanceof Error ? e.message : "Greška pri snimanju PDF-a";
+        options.onPdfAttachFailed?.(msg);
+      }
+    })();
+  }
 }
 
-export async function exportWorkOrderPDF(order: WorkOrder) {
+export async function exportWorkOrderPDF(order: WorkOrder, options?: GeneratedPdfSaveOptions) {
   const orderFromDb = await fetchWorkOrderForExport(order.id);
   const orderData = orderFromDb ?? order;
   const job = await fetchJobByIdForExport(orderData.jobId);
@@ -316,7 +359,9 @@ export async function exportWorkOrderPDF(order: WorkOrder) {
   const html = `<!DOCTYPE html><html><head><meta charset="utf-8"><title>Radni nalog</title>
 <style>${docStyles}</style></head><body>
 <div class="doc-wrap">
+  ${pdfMemorandumHeaderHtml()}
   <div class="doc-accent"></div>
+  <div class="doc-sheet">
   <div class="doc-header">
     <div class="doc-brand">
       <div class="doc-brand-line">Stolarija Kovačević · Interni dokument</div>
@@ -372,10 +417,37 @@ export async function exportWorkOrderPDF(order: WorkOrder) {
   </div>
 
   <div class="footer">Stolarija Kovačević d.o.o. · Radni nalog · ${today()}</div>
+  </div>
 </div>
 </body></html>`;
 
   openPrintWindow(html);
+
+  if (options?.attachGeneratedPdf && options.userId && orderData.jobId) {
+    void (async () => {
+      try {
+        const { htmlDocumentToPdfBlob } = await import("@/lib/pdf-from-html");
+        const blob = await htmlDocumentToPdfBlob(html);
+        const jn = job?.jobNumber?.trim().replace(/[^\w\u0400-\u04FF-]/g, "_") || "posao";
+        const idShort = orderData.id.replace(/-/g, "").slice(0, 8).toUpperCase();
+        const displayFilename = `Radni_nalog_${jn}_${idShort}.pdf`;
+        const result = await upsertJobScopedGeneratedPdf({
+          jobId: orderData.jobId,
+          storageLeaf: `radni-nalog-${orderData.id}.pdf`,
+          blob,
+          uploadedBy: options.userId!,
+          displayFilename,
+          category: "work_order",
+          activityDescription: `PDF radnog naloga (štampa): ${displayFilename}`,
+          systemKey: `work-order-autopdf:${orderData.id}`,
+        });
+        options.onPdfAttached?.(result);
+      } catch (e) {
+        const msg = e instanceof Error ? e.message : "Greška pri snimanju PDF-a";
+        options.onPdfAttachFailed?.(msg);
+      }
+    })();
+  }
 }
 
 export type MaterialOrderExportOptions = {
@@ -391,7 +463,7 @@ export async function exportMaterialOrderPDF(order: MaterialOrder, options?: Mat
   const orderData = orderFromDb ?? order;
   const job = orderData.jobId ? await fetchJobByIdForExport(orderData.jobId) : null;
 
-  const html = await buildNarudzbenicaDocumentHtml(orderData, job);
+  const html = await buildNarudzbenicaDocumentHtml(orderData);
   openPrintWindow(html);
 
   if (options?.attachGeneratedPdf && options.userId) {
@@ -417,4 +489,179 @@ export async function exportMaterialOrderPDF(order: MaterialOrder, options?: Mat
       }
     })();
   }
+}
+
+function quoteIssuerCardHtml(): string {
+  const s = readAppSettingsCache();
+  const name = s.companyName.trim() || "Stolarija Kovačević d.o.o.";
+  const rows: string[] = [];
+  if (s.companyAddress.trim()) rows.push(`<p>${escapeHtml(s.companyAddress.trim())}</p>`);
+  if (s.companyPib.trim()) rows.push(`<p><strong>PIB</strong> ${escapeHtml(s.companyPib.trim())}</p>`);
+  if (s.companyMb.trim()) rows.push(`<p><strong>MB</strong> ${escapeHtml(s.companyMb.trim())}</p>`);
+  if (s.companyPhone.trim()) rows.push(`<p><strong>Tel.</strong> ${escapeHtml(s.companyPhone.trim())}</p>`);
+  if (s.companyEmail.trim()) rows.push(`<p><strong>E-mail</strong> ${escapeHtml(s.companyEmail.trim())}</p>`);
+  if (s.companyWebsite.trim()) rows.push(`<p><strong>Web</strong> ${escapeHtml(s.companyWebsite.trim())}</p>`);
+  if (s.companyBankAccount.trim()) rows.push(`<p><strong>Žiro račun</strong> ${escapeHtml(s.companyBankAccount.trim())}</p>`);
+  const hint =
+    rows.length === 0
+      ? `<p class="doc-party-hint">Podatke firme (naziv, PIB, adresa, žiro…) unesite u Podešavanjima.</p>`
+      : "";
+  return `<div class="card"><div class="doc-party-label">Izdavalac ponude</div><div class="doc-party-body"><p><strong>${escapeHtml(name)}</strong></p>${rows.join("")}${hint}</div></div>`;
+}
+
+function quoteCustomerCardHtml(job: Job | null): string {
+  if (!job?.customer) {
+    return `<div class="card"><div class="doc-party-label">Kupac</div><div class="doc-party-body"><p class="doc-party-hint">—</p></div></div>`;
+  }
+  const c = job.customer;
+  const rows: string[] = [`<p><strong>${escapeHtml(c.fullName)}</strong></p>`];
+  if (c.contactPerson.trim()) rows.push(`<p>${escapeHtml(c.contactPerson.trim())}</p>`);
+  if (c.billingAddress.trim()) {
+    rows.push(`<p><strong>Adresa (naplata)</strong><br/>${escapeHtml(c.billingAddress.trim())}</p>`);
+  }
+  if (c.installationAddress.trim()) {
+    rows.push(`<p><strong>Adresa ugradnje</strong><br/>${escapeHtml(c.installationAddress.trim())}</p>`);
+  }
+  const phone = c.phones?.[0]?.trim();
+  if (phone) rows.push(`<p><strong>Tel.</strong> ${escapeHtml(phone)}</p>`);
+  const em = c.emails?.[0]?.trim();
+  if (em) rows.push(`<p><strong>E-mail</strong> ${escapeHtml(em)}</p>`);
+  if (c.pib.trim()) rows.push(`<p><strong>PIB</strong> ${escapeHtml(c.pib.trim())}</p>`);
+  if (c.registrationNumber.trim()) rows.push(`<p><strong>Matični broj</strong> ${escapeHtml(c.registrationNumber.trim())}</p>`);
+  return `<div class="card"><div class="doc-party-label">Kupac</div><div class="doc-party-body">${rows.join("")}</div></div>`;
+}
+
+function quoteHtml(quote: Quote, job: Job | null) {
+  const settings = readAppSettingsCache();
+  const currency = settings.currency;
+  const companyShort = settings.companyName.trim() || "Stolarija Kovačević d.o.o.";
+  const jobNumber = job?.jobNumber ?? "—";
+  const customerName = job?.customer?.fullName ?? "Kupac";
+
+  const linesRows =
+    quote.lines.length > 0
+      ? quote.lines
+          .map((line) => {
+            const amount = (Number(line.quantity) || 0) * (Number(line.unitPrice) || 0);
+            return `<tr>
+  <td>${escapeHtml(line.description)}</td>
+  <td class="num">${escapeHtml(String(line.quantity))}</td>
+  <td class="num">${escapeHtml(formatCurrencyBySettings(Number(line.unitPrice) || 0))}</td>
+  <td class="num">${escapeHtml(formatCurrencyBySettings(amount))}</td>
+</tr>`;
+          })
+          .join("")
+      : `<tr class="doc-empty-row"><td colspan="4">Nema stavki u ponudi</td></tr>`;
+
+  const totalFormatted = escapeHtml(formatCurrencyBySettings(quote.totalAmount));
+
+  return `<!DOCTYPE html><html><head><meta charset="utf-8"><title>Ponuda</title>
+<style>${docStyles}</style></head><body>
+<div class="doc-wrap">
+  ${pdfMemorandumHeaderHtml()}
+  <div class="doc-accent"></div>
+  <div class="doc-sheet">
+  <div class="doc-parties-grid">
+    ${quoteIssuerCardHtml()}
+    ${quoteCustomerCardHtml(job)}
+  </div>
+  <div class="doc-header">
+    <div class="doc-brand">
+      <div class="doc-brand-line">${escapeHtml(companyShort)} · Ponuda</div>
+      <h1 class="doc-title">Ponuda ${escapeHtml(quote.quoteNumber)}</h1>
+      <p class="doc-lead">Verzija ${quote.versionNumber} · Posao <strong>${escapeHtml(jobNumber)}</strong> · ${escapeHtml(customerName)}</p>
+    </div>
+    <div class="doc-meta-right">
+      <div><strong>Štampano</strong><br/>${today()}</div>
+    </div>
+  </div>
+  <div class="section">
+    <div class="section-title">Stavke</div>
+    <div class="doc-table-wrap">
+    <table class="doc-data-table" aria-label="Stavke ponude">
+      <thead>
+        <tr>
+          <th>Opis</th>
+          <th class="num" style="width:52px">Kol.</th>
+          <th class="num" style="width:96px">Jed. cena (${currency})</th>
+          <th class="num" style="width:96px">Iznos (${currency})</th>
+        </tr>
+      </thead>
+      <tbody>${linesRows}</tbody>
+    </table>
+    </div>
+    <div class="doc-total-panel">
+      <div class="doc-total-box">
+        <div class="doc-total-label">Ukupno (sa PDV)</div>
+        <div><span class="doc-total-value">${totalFormatted}</span></div>
+      </div>
+    </div>
+  </div>
+  ${quote.note ? `<div class="section"><div class="section-title">Napomena</div><div class="note-box">${escapeHtml(quote.note)}</div></div>` : ""}
+  <div class="footer">${escapeHtml(companyShort)} · Ponuda · ${today()}</div>
+  </div>
+</div>
+</body></html>`;
+}
+
+export async function exportQuotePDF(quote: Quote, jobId: string, options?: GeneratedPdfSaveOptions) {
+  const job = await fetchJobByIdForExport(jobId);
+  const html = quoteHtml(quote, job);
+  openPrintWindow(html);
+
+  if (options?.attachGeneratedPdf && options.userId) {
+    void (async () => {
+      try {
+        const { htmlDocumentToPdfBlob } = await import("@/lib/pdf-from-html");
+        const blob = await htmlDocumentToPdfBlob(html);
+        const result = await upsertQuoteGeneratedPdf({
+          quote,
+          jobId,
+          blob,
+          uploadedBy: options.userId!,
+        });
+        options.onPdfAttached?.(result);
+      } catch (e) {
+        const msg = e instanceof Error ? e.message : "Greška pri snimanju PDF ponude";
+        options.onPdfAttachFailed?.(msg);
+      }
+    })();
+  }
+}
+
+export async function prepareQuoteEmailDraft(quote: Quote, jobId: string, options?: GeneratedPdfSaveOptions) {
+  const job = await fetchJobByIdForExport(jobId);
+  const html = quoteHtml(quote, job);
+
+  const { htmlDocumentToPdfBlob } = await import("@/lib/pdf-from-html");
+  const blob = await htmlDocumentToPdfBlob(html);
+  const fileName = `ponuda_${quote.quoteNumber.replace(/[^\w-]/g, "_")}.pdf`;
+  const objectUrl = URL.createObjectURL(blob);
+  const a = document.createElement("a");
+  a.href = objectUrl;
+  a.download = fileName;
+  a.click();
+  URL.revokeObjectURL(objectUrl);
+
+  if (options?.attachGeneratedPdf && options.userId) {
+    try {
+      const result = await upsertQuoteGeneratedPdf({
+        quote,
+        jobId,
+        blob,
+        uploadedBy: options.userId,
+      });
+      options.onPdfAttached?.(result);
+    } catch (e) {
+      const msg = e instanceof Error ? e.message : "Greška pri snimanju PDF ponude";
+      options.onPdfAttachFailed?.(msg);
+    }
+  }
+
+  const targetEmail = job?.customer?.emails?.[0] ?? "";
+  const subject = encodeURIComponent(`Ponuda ${quote.quoteNumber}`);
+  const body = encodeURIComponent(
+    `Poštovani,\n\nu prilogu je ponuda ${quote.quoteNumber}.\n\nPozdrav.`,
+  );
+  window.open(`mailto:${targetEmail}?subject=${subject}&body=${body}`, "_self");
 }

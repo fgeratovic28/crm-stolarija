@@ -13,7 +13,7 @@ interface ProtectedRouteProps {
 }
 
 export function ProtectedRoute({ children, module }: ProtectedRouteProps) {
-  const { isAuthenticated, authReady, isPendingApproval } = useAuthStore();
+  const { isAuthenticated, authReady, authProfileReady, isPendingApproval } = useAuthStore();
   const { hasAccess } = useRole();
   const location = useLocation();
 
@@ -26,6 +26,13 @@ export function ProtectedRoute({ children, module }: ProtectedRouteProps) {
 
   if (!isAuthenticated) {
     return <Navigate to="/login" state={{ from: location }} replace />;
+  }
+
+  if (!authProfileReady) {
+    if (hasRichSplashCompleted()) {
+      return <AuthHydratingFallback />;
+    }
+    return <AppSessionLoadingScreen sessionReady={false} />;
   }
 
   if (isPendingApproval && location.pathname !== "/pending-approval") {

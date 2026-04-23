@@ -1,5 +1,5 @@
 import * as z from "zod";
-import type { MaterialOrder } from "@/types";
+import type { MaterialOrder, Supplier } from "@/types";
 import { normalizeOrderLines } from "@/lib/material-order-lines";
 
 function roundMoney(n: number): number {
@@ -66,6 +66,42 @@ export type NarudzbenicaFieldsValues = z.infer<typeof narudzbenicaFieldsSchema>;
 export type MaterialOrderLineFormValues = z.infer<typeof orderLineSchema>;
 
 /** Vrednosti za podformu „Porudžbenica” pri izmeni narudžbine. */
+function addCalendarDaysYmd(ymd: string, days: number): string {
+  const [y, m, d] = ymd.split("-").map(Number);
+  if (!Number.isFinite(y) || !Number.isFinite(m) || !Number.isFinite(d)) {
+    return new Date().toISOString().split("T")[0];
+  }
+  const dt = new Date(y, m - 1, d);
+  dt.setDate(dt.getDate() + days);
+  const yyyy = dt.getFullYear();
+  const mm = String(dt.getMonth() + 1).padStart(2, "0");
+  const dd = String(dt.getDate()).padStart(2, "0");
+  return `${yyyy}-${mm}-${dd}`;
+}
+
+/** Polja porudžbenice koja žive na dobavljaču — prebacuju se u formu narudžbine pri izboru dobavljača. */
+export function narudzbenicaDefaultsFromSupplier(
+  s: Supplier,
+  requestDate: string,
+): Pick<
+  NarudzbenicaFieldsValues,
+  "nbShippingMethod" | "nbPaymentDueDate" | "nbPaymentNote" | "nbLegalReference" | "nbDeliveryAddressOverride"
+> {
+  const req = requestDate?.trim() || new Date().toISOString().split("T")[0];
+  const days = s.nbPaymentDaysAfterOrder;
+  let nbPaymentDueDate = "";
+  if (days != null && Number.isFinite(days) && days > 0) {
+    nbPaymentDueDate = addCalendarDaysYmd(req, Math.round(Number(days)));
+  }
+  return {
+    nbShippingMethod: s.nbShippingMethod?.trim() ?? "",
+    nbPaymentDueDate,
+    nbPaymentNote: s.nbPaymentNote?.trim() ?? "",
+    nbLegalReference: s.nbLegalReference?.trim() ?? "",
+    nbDeliveryAddressOverride: s.nbDeliveryAddressOverride?.trim() ?? "",
+  };
+}
+
 export function narudzbenicaDefaultsFromOrder(o: MaterialOrder): NarudzbenicaFieldsValues {
   const lines = normalizeOrderLines(o);
   const nbLines =

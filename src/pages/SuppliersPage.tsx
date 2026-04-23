@@ -1,5 +1,5 @@
 import { useState } from "react";
-import { Truck, Plus, Search, Edit2, Trash2, Mail, Phone, MapPin, CheckCircle2, XCircle, FileSpreadsheet } from "lucide-react";
+import { Truck, Plus, Search, Edit2, Trash2, Mail, Phone, MapPin, CheckCircle2, XCircle } from "lucide-react";
 import { AppLayout } from "@/components/layout/AppLayout";
 import { PageHeader } from "@/components/shared/PageHeader";
 import { Breadcrumbs } from "@/components/shared/Breadcrumbs";
@@ -13,9 +13,7 @@ import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/u
 import { SupplierForm } from "@/components/shared/SupplierForm";
 import { GenericBadge } from "@/components/shared/StatusBadge";
 import type { Supplier } from "@/types";
-import { ImportExcelButton } from "@/components/shared/ImportExcelButton";
 import type { SupplierFormValues } from "@/components/shared/SupplierForm";
-import { labelMaterialType } from "@/lib/activity-labels";
 
 export default function SuppliersPage() {
   const { suppliers, isLoading, createSupplier, updateSupplier, deleteSupplier } = useSuppliers();
@@ -74,34 +72,9 @@ export default function SuppliersPage() {
           icon={Truck}
           actions={
             canPerformAction("create_order") && (
-              <div className="flex gap-2">
-                <ImportExcelButton<Partial<Supplier>>
-                  label="Uvezi dobavljače"
-                  onImport={async (data) => {
-                    for (const supplier of data) {
-                      await createSupplier.mutateAsync({
-                        name: supplier.name || "",
-                        contactPerson: supplier.contactPerson || "",
-                        phone: supplier.phone || "",
-                        email: supplier.email || "",
-                        address: supplier.address || "",
-                        materialTypes: supplier.materialTypes || [],
-                        active: true,
-                      });
-                    }
-                  }}
-                  columnMap={{
-                    "Naziv": "name",
-                    "Kontakt osoba": "contactPerson",
-                    "Telefon": "phone",
-                    "Email": "email",
-                    "Adresa": "address",
-                  }}
-                />
-                <Button onClick={openCreate}>
-                  <Plus className="w-4 h-4 mr-1.5" /> Novi dobavljač
-                </Button>
-              </div>
+              <Button onClick={openCreate}>
+                <Plus className="w-4 h-4 mr-1.5" /> Novi dobavljač
+              </Button>
             )
           }
         />
@@ -157,17 +130,6 @@ export default function SuppliersPage() {
                   </div>
                 </div>
 
-                <div className="flex flex-wrap gap-1.5 mb-6">
-                  {supplier.materialTypes.map(type => (
-                    <GenericBadge 
-                      key={type} 
-                      label={labelMaterialType(type)} 
-                      variant="info" 
-                      className="text-[10px] px-1.5 py-0"
-                    />
-                  ))}
-                </div>
-
                 <div className="flex justify-end gap-2 pt-4 border-t border-border">
                   {canPerformAction("create_order") && (
                     <>
@@ -191,6 +153,7 @@ export default function SuppliersPage() {
               <DialogTitle>{editingSupplier ? "Izmena dobavljača" : "Novi dobavljač"}</DialogTitle>
             </DialogHeader>
             <SupplierForm
+              key={isModalOpen ? (editingSupplier?.id ?? "new") : "closed"}
               initialData={editingSupplier || {}}
               onSubmit={editingSupplier ? handleUpdate : handleCreate}
               onCancel={() => setIsModalOpen(false)}

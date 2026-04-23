@@ -22,17 +22,30 @@ type PaymentValues = z.infer<typeof paymentSchema>;
 
 interface RecordPaymentModalProps {
   jobId: string;
+  defaultIncludesVat?: boolean;
   trigger?: React.ReactNode;
 }
 
-export function RecordPaymentModal({ jobId, trigger }: RecordPaymentModalProps) {
+export function RecordPaymentModal({ jobId, defaultIncludesVat = true, trigger }: RecordPaymentModalProps) {
   const [open, setOpen] = useState(false);
   const { recordPayment } = useJobRelatedData(jobId);
 
   const form = useForm<PaymentValues>({
     resolver: zodResolver(paymentSchema),
-    defaultValues: { amount: 0, date: new Date().toISOString().slice(0, 10), includesVat: true, note: "" },
+    defaultValues: { amount: 0, date: new Date().toISOString().slice(0, 10), includesVat: defaultIncludesVat, note: "" },
   });
+
+  const handleOpenChange = (nextOpen: boolean) => {
+    setOpen(nextOpen);
+    if (nextOpen) {
+      form.reset({
+        amount: 0,
+        date: new Date().toISOString().slice(0, 10),
+        includesVat: defaultIncludesVat,
+        note: "",
+      });
+    }
+  };
 
   const onSubmit = async (data: PaymentValues) => {
     try {
@@ -43,7 +56,12 @@ export function RecordPaymentModal({ jobId, trigger }: RecordPaymentModalProps) 
         includesVat: data.includesVat,
         note: data.note,
       });
-      form.reset();
+      form.reset({
+        amount: 0,
+        date: new Date().toISOString().slice(0, 10),
+        includesVat: defaultIncludesVat,
+        note: "",
+      });
       setOpen(false);
     } catch (error) {
       // Error handled in hook
@@ -51,7 +69,7 @@ export function RecordPaymentModal({ jobId, trigger }: RecordPaymentModalProps) 
   };
 
   return (
-    <Dialog open={open} onOpenChange={setOpen}>
+    <Dialog open={open} onOpenChange={handleOpenChange}>
       <DialogTrigger asChild>
         {trigger || <Button size="sm"><Plus className="w-4 h-4 mr-1" /> Evidentiraj uplatu</Button>}
       </DialogTrigger>

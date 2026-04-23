@@ -9,18 +9,13 @@ import {
   FormMessage,
 } from "@/components/ui/form";
 import { Input } from "@/components/ui/input";
-import { Textarea } from "@/components/ui/textarea";
 import { Button } from "@/components/ui/button";
-import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import type { NarudzbenicaFieldsValues, MaterialOrderLineFormValues } from "@/lib/material-order-form-schema";
 import { totalNetFromFormLines } from "@/lib/material-order-form-schema";
-import type { MaterialType } from "@/types";
 import { formatCurrencyBySettings } from "@/lib/app-settings";
 
 interface NarudzbenicaFieldsProps {
   control: Control<NarudzbenicaFieldsValues>;
-  /** Vrste materijala za stavke (npr. filtrirano po izabranom dobavljaču). */
-  lineMaterialTypeOptions: { value: MaterialType; label: string }[];
 }
 
 const defaultLine = {
@@ -31,7 +26,7 @@ const defaultLine = {
   materialType: undefined as string | undefined,
 };
 
-export function NarudzbenicaFields({ control, lineMaterialTypeOptions }: NarudzbenicaFieldsProps) {
+export function NarudzbenicaFields({ control }: NarudzbenicaFieldsProps) {
   const { fields, append, remove } = useFieldArray({
     control,
     name: "nbLines",
@@ -63,35 +58,6 @@ export function NarudzbenicaFields({ control, lineMaterialTypeOptions }: Narudzb
                 </Button>
               )}
             </div>
-
-            <FormField
-              control={control}
-              name={`nbLines.${index}.materialType`}
-              render={({ field: f }) => (
-                <FormItem>
-                  <FormLabel>Materijal</FormLabel>
-                  <Select
-                    onValueChange={(v) => f.onChange(v === "__none__" ? undefined : v)}
-                    value={f.value ?? "__none__"}
-                  >
-                    <FormControl>
-                      <SelectTrigger>
-                        <SelectValue placeholder="Izaberite" />
-                      </SelectTrigger>
-                    </FormControl>
-                    <SelectContent>
-                      <SelectItem value="__none__">—</SelectItem>
-                      {lineMaterialTypeOptions.map((t) => (
-                        <SelectItem key={t.value} value={t.value}>
-                          {t.label}
-                        </SelectItem>
-                      ))}
-                    </SelectContent>
-                  </Select>
-                  <FormMessage />
-                </FormItem>
-              )}
-            />
 
             <FormField
               control={control}
@@ -211,92 +177,6 @@ export function NarudzbenicaFields({ control, lineMaterialTypeOptions }: Narudzb
                     field.onChange(v === "" ? undefined : Number(v.replace(",", ".")));
                   }}
                 />
-              </FormControl>
-              <FormMessage />
-            </FormItem>
-          )}
-        />
-      </div>
-
-      <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
-        <FormField
-          control={control}
-          name="nbBuyerBankAccount"
-          render={({ field }) => (
-            <FormItem className="sm:col-span-2">
-              <FormLabel>Žiro račun naručioca</FormLabel>
-              <FormControl>
-                <Input placeholder="Za prikaz na porudžbenici" {...field} value={field.value ?? ""} />
-              </FormControl>
-              <FormMessage />
-            </FormItem>
-          )}
-        />
-
-        <FormField
-          control={control}
-          name="nbShippingMethod"
-          render={({ field }) => (
-            <FormItem className="sm:col-span-2">
-              <FormLabel>Način otpreme / isporuke</FormLabel>
-              <FormControl>
-                <Input placeholder="npr. sopstveni prevoz, kurir…" {...field} value={field.value ?? ""} />
-              </FormControl>
-              <FormMessage />
-            </FormItem>
-          )}
-        />
-
-        <FormField
-          control={control}
-          name="nbPaymentDueDate"
-          render={({ field }) => (
-            <FormItem>
-              <FormLabel>Rok plaćanja</FormLabel>
-              <FormControl>
-                <Input type="date" {...field} value={field.value ?? ""} />
-              </FormControl>
-              <FormMessage />
-            </FormItem>
-          )}
-        />
-
-        <FormField
-          control={control}
-          name="nbLegalReference"
-          render={({ field }) => (
-            <FormItem>
-              <FormLabel>Pravni osnov</FormLabel>
-              <FormControl>
-                <Input placeholder="npr. Ugovor br. …" {...field} value={field.value ?? ""} />
-              </FormControl>
-              <FormMessage />
-            </FormItem>
-          )}
-        />
-
-        <FormField
-          control={control}
-          name="nbPaymentNote"
-          render={({ field }) => (
-            <FormItem className="sm:col-span-2">
-              <FormLabel>Napomena o plaćanju</FormLabel>
-              <FormControl>
-                <Textarea placeholder="Dodatni uslovi plaćanja (ako nisu pokriveni rokom)" rows={2} {...field} value={field.value ?? ""} />
-              </FormControl>
-              <FormMessage />
-            </FormItem>
-          )}
-        />
-
-        <FormField
-          control={control}
-          name="nbDeliveryAddressOverride"
-          render={({ field }) => (
-            <FormItem className="sm:col-span-2">
-              <FormLabel>Adresa isporuke (druga od kupca u poslu)</FormLabel>
-              <FormControl>
-                <Textarea placeholder="Ostavite prazno da se koristi adresa kupca iz posla" rows={2} {...field} value={field.value ?? ""} />
               </FormControl>
               <FormMessage />
             </FormItem>

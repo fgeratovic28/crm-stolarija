@@ -26,13 +26,18 @@ import { labelMaterialType } from "@/lib/activity-labels";
 const STATUS_COLORS: Record<string, string> = {
   new: "hsl(215, 16%, 47%)",
   quote_sent: "hsl(199, 89%, 48%)",
+  accepted: "hsl(142, 71%, 40%)",
   measuring: "hsl(152, 57%, 40%)",
+  measurement_processing: "hsl(262, 83%, 58%)",
+  ready_for_work: "hsl(175, 70%, 38%)",
+  waiting_material: "hsl(38, 92%, 48%)",
   in_production: "hsl(38, 92%, 48%)",
   scheduled: "hsl(239, 84%, 58%)",
   installation_in_progress: "hsl(221, 83%, 53%)",
   completed: "hsl(142, 71%, 40%)",
   complaint: "hsl(0, 72%, 51%)",
   service: "hsl(220, 9%, 46%)",
+  canceled: "hsl(220, 9%, 46%)",
 };
 
 export default function DashboardPage() {
@@ -50,9 +55,17 @@ export default function DashboardPage() {
   const appSettings = readAppSettingsCache();
   const formatCurrency = (n: number) => formatCurrencyBySettings(n);
 
-  const pipelineStatuses: JobStatus[] = ["measuring", "in_production", "installation_in_progress"];
+  const pipelineStatuses: JobStatus[] = [
+    "accepted",
+    "measuring",
+    "measurement_processing",
+    "ready_for_work",
+    "waiting_material",
+    "in_production",
+    "installation_in_progress",
+  ];
   const stats = {
-    activeJobs: jobs.filter(j => j.status !== "completed").length,
+    activeJobs: jobs.filter(j => j.status !== "completed" && j.status !== "canceled").length,
     inProgress: jobs.filter(j => pipelineStatuses.includes(j.status)).length,
     unpaidJobs: jobs.filter(j => j.unpaidBalance > 0).length,
     pendingOrders: dashboardStats?.pendingOrders || 0,
