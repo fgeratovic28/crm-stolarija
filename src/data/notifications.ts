@@ -138,7 +138,7 @@ function generateNotifications(
 
   if (settings.notifLateDeliveries) {
     materialOrders
-      .filter((m) => m.deliveryStatus === "shipped" || m.deliveryStatus === "pending")
+      .filter((m) => m.deliveryStatus === "shipped" || m.deliveryStatus === "email_sent" || m.deliveryStatus === "pending")
       .forEach((m) => {
         const expected = m.expectedDelivery || "";
         const expectedDate = expected ? new Date(expected) : null;

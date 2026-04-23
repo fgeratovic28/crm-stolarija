@@ -1,6 +1,6 @@
 import { useEffect, useState } from "react";
 import { useQueryClient } from "@tanstack/react-query";
-import { Settings, Building2, Bell, Palette, Save, Loader2 } from "lucide-react";
+import { Settings, Building2, Bell, Palette, Save, Loader2, DatabaseBackup } from "lucide-react";
 import { AppLayout } from "@/components/layout/AppLayout";
 import { PageHeader } from "@/components/shared/PageHeader";
 import { Breadcrumbs } from "@/components/shared/Breadcrumbs";
@@ -70,6 +70,7 @@ export default function SettingsPage() {
   const [isInitialLoading, setIsInitialLoading] = useState(true);
   const [isSaving, setIsSaving] = useState(false);
   const [maintenanceSaving, setMaintenanceSaving] = useState(false);
+  const [sqlBackupRunning, setSqlBackupRunning] = useState(false);
 
   const [companyName, setCompanyName] = useState("Stolarija Kovačević d.o.o.");
   const [companyPib, setCompanyPib] = useState("100234567");
@@ -311,6 +312,29 @@ export default function SettingsPage() {
     }
   };
 
+  const handleRunSqlBackupNow = async () => {
+    setSqlBackupRunning(true);
+    try {
+      const { data, error } = await supabase.functions.invoke<{ ok?: boolean; error?: string; key?: string }>(
+        "backup-sql",
+        {
+          body: { trigger: "manual-admin" },
+        },
+      );
+      if (error || !data?.ok) {
+        throw new Error(data?.error || error?.message || "Backup nije uspeo.");
+      }
+
+      toast.success("SQL Backup je uspešno generisan i sačuvan na Cloudflare R2!");
+    } catch (error) {
+      toast.error("SQL Backup nije uspeo", {
+        description: error instanceof Error ? error.message : "Nepoznata greška.",
+      });
+    } finally {
+      setSqlBackupRunning(false);
+    }
+  };
+
   useEffect(() => {
     if (typeof document === "undefined") return;
     document.documentElement.lang = language === "en" ? "en" : "sr";
@@ -434,6 +458,31 @@ export default function SettingsPage() {
 
               {currentRole === "admin" ? (
                 <>
+                  <Separator />
+                  <div className="rounded-lg border border-border bg-muted/25 p-4 space-y-3">
+                    <div className="space-y-1">
+                      <p className="text-sm font-medium text-foreground">Sigurnost baze podataka</p>
+                      <p className="text-xs text-muted-foreground">
+                        Ručno pokretanje SQL backup-a kompletne baze i čuvanje u Cloudflare R2.
+                      </p>
+                    </div>
+                    <Button
+                      type="button"
+                      variant="secondary"
+                      size="sm"
+                      className="w-full sm:w-auto"
+                      onClick={() => void handleRunSqlBackupNow()}
+                      disabled={isInitialLoading || sqlBackupRunning}
+                    >
+                      {sqlBackupRunning ? (
+                        <Loader2 className="w-4 h-4 mr-1.5 animate-spin" />
+                      ) : (
+                        <DatabaseBackup className="w-4 h-4 mr-1.5" />
+                      )}
+                      Napravi SQL Backup odmah
+                    </Button>
+                  </div>
+
                   <Separator />
                   <div className="rounded-lg border border-dashed border-border/90 bg-muted/25 p-4 space-y-3">
                     <div>

@@ -17,6 +17,7 @@ import {
   PackageCheck,
   FileSearch2,
   Banknote,
+  Mail,
 } from "lucide-react";
 import { GenericBadge } from "@/components/shared/StatusBadge";
 import { EmptyState } from "@/components/shared/EmptyState";
@@ -43,11 +44,13 @@ import { exportMaterialOrderPDF } from "@/lib/export-documents";
 import { mergeDefined } from "@/lib/merge-defined";
 import { NarudzbenicaQuickEditDialog } from "@/components/modals/NarudzbenicaQuickEditDialog";
 import { MaterialOrderSefDialog } from "@/components/modals/MaterialOrderSefDialog";
+import { SupplierOrderModal } from "@/components/modals/SupplierOrderModal";
 import { orderIsFromCutListNabavka, sumOrderLinesNet } from "@/lib/material-order-lines";
 
 const deliveryVariant: Record<string, "success" | "warning" | "info" | "muted"> = {
   delivered: "success",
   shipped: "info",
+  email_sent: "muted",
   pending: "warning",
   partial: "muted",
 };
@@ -55,6 +58,7 @@ const deliveryVariant: Record<string, "success" | "warning" | "info" | "muted"> 
 const deliveryLabels: Record<string, string> = {
   delivered: "Isporučeno",
   shipped: "Na putu",
+  email_sent: "Poslat mejl",
   pending: "Na čekanju",
   partial: "Delimično",
 };
@@ -83,6 +87,7 @@ export function MaterialOrdersTab({
   const [nbQuickOrder, setNbQuickOrder] = useState<MaterialOrder | null>(null);
   const [otherOrdersOpen, setOtherOrdersOpen] = useState(false);
   const [sefDialogOrder, setSefDialogOrder] = useState<MaterialOrder | null>(null);
+  const [supplierOrderModalOrder, setSupplierOrderModalOrder] = useState<MaterialOrder | null>(null);
 
   const displayOrdersAll = initialOrders || hookedOrders || [];
   const splitByCutList = !!(alignMaterijalWithCutList && jobId);
@@ -208,6 +213,25 @@ export function MaterialOrdersTab({
     }
   };
 
+  const buildSupplierOrderEmailSubject = (order: MaterialOrder): string => {
+    return "Porudzbina materijala Termo Plast D.O.O";
+  };
+
+  const buildSupplierOrderEmailBody = (order: MaterialOrder): string => {
+    const lines = [
+      "Postovani,",
+      "",
+      "u prilogu Vam dostavljamo porudzbinu materijala.",
+      "Ljubazno Vas molimo da proverite dokument i potvrdite prijem porudzbine.",
+      "",
+      "Za sva pitanja stojimo Vam na raspolaganju.",
+      "",
+      "Srdacan pozdrav,",
+      "Termo Plast D.O.O",
+    ].filter(Boolean);
+    return lines.join("\n");
+  };
+
   const renderOrderCard = (o: MaterialOrder) => {
     const relatedJob = o.job;
     const attachments = attachmentsByOrder[o.id] ?? [];
@@ -319,6 +343,16 @@ export function MaterialOrdersTab({
                           onConfirm={() => markMaterialDelivered(o)}
                         />
                       ) : null}
+                      <Button
+                        type="button"
+                        variant="outline"
+                        size="sm"
+                        className="h-8 text-xs gap-1.5"
+                        onClick={() => setSupplierOrderModalOrder(o)}
+                      >
+                        <Mail className="w-3.5 h-3.5" />
+                        Pošalji porudžbinu dobavljaču
+                      </Button>
                       <Button
                         type="button"
                         variant="outline"
@@ -594,6 +628,32 @@ export function MaterialOrdersTab({
         isSaving={updateOrder.isPending}
         onFilesChanged={() => {
           void queryClient.invalidateQueries({ queryKey: ["material-order-files"] });
+        }}
+      />
+
+      <SupplierOrderModal
+        open={supplierOrderModalOrder !== null}
+        onOpenChange={(open) => {
+          if (!open) setSupplierOrderModalOrder(null);
+        }}
+        recipientEmail={supplierOrderModalOrder?.supplierEmail?.trim() || "Nije unet email dobavljača"}
+        subject={
+          supplierOrderModalOrder
+            ? buildSupplierOrderEmailSubject(supplierOrderModalOrder)
+            : "Porudzbina materijala"
+        }
+        body={supplierOrderModalOrder ? buildSupplierOrderEmailBody(supplierOrderModalOrder) : ""}
+        onDownloadDocument={async () => {
+          if (!supplierOrderModalOrder) return;
+          await handleExportPdf(supplierOrderModalOrder);
+        }}
+        onMarkAsSent={async () => {
+          if (!supplierOrderModalOrder) return;
+          const next = mergeDefined(supplierOrderModalOrder, {
+            deliveryStatus: "email_sent" as const,
+          }) as MaterialOrder;
+          await updateOrder.mutateAsync(next);
+          setSupplierOrderModalOrder(null);
         }}
       />
     </div>

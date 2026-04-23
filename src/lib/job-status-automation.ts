@@ -11,7 +11,7 @@ import {
 type WorkOrderStatus = "pending" | "in_progress" | "completed" | "canceled";
 
 type WorkOrderRow = { id?: string; status: WorkOrderStatus; type: WorkOrderType };
-type MaterialOrderDeliveryStatus = "pending" | "shipped" | "delivered" | "partial";
+type MaterialOrderDeliveryStatus = "pending" | "email_sent" | "shipped" | "delivered" | "partial";
 type MaterialOrderRow = { delivery_status: MaterialOrderDeliveryStatus };
 type QuoteRow = {
   status: QuoteStatus;

@@ -2,3 +2,6 @@
 
 [functions.r2-storage]
 verify_jwt = true
+
+[functions.backup-sql]
+verify_jwt = false

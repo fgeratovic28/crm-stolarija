@@ -1,6 +1,6 @@
 import { useCallback, useMemo, useState } from "react";
 import { useQueryClient } from "@tanstack/react-query";
-import { CheckCircle2, ExternalLink, FileText, Loader2, Mail, PlusCircle, Printer, Trash2 } from "lucide-react";
+import { CheckCircle2, ExternalLink, FileText, Loader2, PlusCircle, Printer, Trash2 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -17,8 +17,9 @@ import { useQuotes } from "@/hooks/use-quotes";
 import { sumQuoteLineAmounts } from "@/hooks/use-jobs";
 import { useAuthStore } from "@/stores/auth-store";
 import { toast } from "sonner";
-import { exportQuotePDF, prepareQuoteEmailDraft } from "@/lib/export-documents";
+import { exportQuotePDF } from "@/lib/export-documents";
 import type { JobQuoteLine, Quote, QuoteStatus } from "@/types";
+import { SendQuoteButton } from "@/components/job-tabs/SendQuoteButton";
 
 function amountInputString(value: number): string {
   if (!Number.isFinite(value) || value <= 0) return "";
@@ -37,6 +38,8 @@ const STATUS_VARIANT: Record<QuoteStatus, "muted" | "info" | "success" | "danger
 export function QuotesTab({
   jobId,
   quotes: initialQuotes,
+  customerEmail,
+  customerName,
   jobQuoteLines,
   suggestedQuoteTotal,
   defaultPricesIncludeVat = true,
@@ -46,6 +49,8 @@ export function QuotesTab({
 }: {
   jobId: string;
   quotes?: Quote[];
+  customerEmail?: string;
+  customerName?: string;
   /** Stavke sa posla (unos pri „Novi posao“) — popunjavaju formu „Nova ponuda“. */
   jobQuoteLines?: JobQuoteLine[];
   /** Ukupna cena posla (npr. sa PDV-om); ako nije setovano, koristi se zbir stavki. */
@@ -438,40 +443,25 @@ export function QuotesTab({
                       )}
                       Generiši PDF
                     </Button>
-                    <Button
-                      variant="outline"
-                      size="sm"
-                      disabled={busyQuoteId === quote.id}
-                      onClick={async () => {
-                        try {
-                          setBusyQuoteId(quote.id);
-                          await prepareQuoteEmailDraft(quote, jobId, {
-                            attachGeneratedPdf: !!user?.id,
-                            userId: user?.id,
-                            onPdfAttached: () => {
-                              queryClient.invalidateQueries({ queryKey: ["quotes", jobId] });
-                              queryClient.invalidateQueries({ queryKey: ["files", jobId] });
-                            },
-                            onPdfAttachFailed: (m) =>
-                              toast.error("Mejl je otvoren, ali PDF nije sačuvan uz ponudu", { description: m }),
-                          });
-                          await updateQuoteStatus.mutateAsync({
-                            quoteId: quote.id,
-                            jobId,
-                            status: "sent",
-                            authorId: user?.id ?? null,
-                          });
-                          toast.success("Preuzet PDF, otvoren draft mejla; ponuda označena kao poslata.");
-                        } catch {
-                          toast.error("Greška pri pripremi mejla");
-                        } finally {
-                          setBusyQuoteId(null);
-                        }
+                    <SendQuoteButton
+                      jobId={jobId}
+                      customerEmail={customerEmail}
+                      customerName={customerName}
+                      quoteNumber={quote.quoteNumber}
+                      quoteTotal={quote.totalAmount}
+                      pdfUrl={quote.fileUrl}
+                      onSuccess={async () => {
+                        await updateQuoteStatus.mutateAsync({
+                          quoteId: quote.id,
+                          jobId,
+                          status: "sent",
+                          authorId: user?.id ?? null,
+                        });
+                        await queryClient.invalidateQueries({ queryKey: ["job", jobId] });
+                        await queryClient.invalidateQueries({ queryKey: ["jobs"] });
+                        await queryClient.invalidateQueries({ queryKey: ["quotes", jobId] });
                       }}
-                    >
-                      <Mail className="w-4 h-4 mr-1" />
-                      Pošalji mejl kupcu
-                    </Button>
+                    />
                   </div>
                 </div>
               )}
@@ -509,40 +499,25 @@ export function QuotesTab({
                     )}
                     Generiši PDF
                   </Button>
-                  <Button
-                    variant="outline"
-                    size="sm"
-                    disabled={busyQuoteId === quote.id}
-                    onClick={async () => {
-                      try {
-                        setBusyQuoteId(quote.id);
-                        await prepareQuoteEmailDraft(quote, jobId, {
-                          attachGeneratedPdf: !!user?.id,
-                          userId: user?.id,
-                          onPdfAttached: () => {
-                            queryClient.invalidateQueries({ queryKey: ["quotes", jobId] });
-                            queryClient.invalidateQueries({ queryKey: ["files", jobId] });
-                          },
-                          onPdfAttachFailed: (m) =>
-                            toast.error("Mejl je otvoren, ali PDF nije sačuvan uz ponudu", { description: m }),
-                        });
-                        await updateQuoteStatus.mutateAsync({
-                          quoteId: quote.id,
-                          jobId,
-                          status: "sent",
-                          authorId: user?.id ?? null,
-                        });
-                        toast.success("Preuzet PDF, otvoren draft mejla; ponuda označena kao poslata.");
-                      } catch {
-                        toast.error("Greška pri pripremi mejla");
-                      } finally {
-                        setBusyQuoteId(null);
-                      }
+                  <SendQuoteButton
+                    jobId={jobId}
+                    customerEmail={customerEmail}
+                    customerName={customerName}
+                    quoteNumber={quote.quoteNumber}
+                    quoteTotal={quote.totalAmount}
+                    pdfUrl={quote.fileUrl}
+                    onSuccess={async () => {
+                      await updateQuoteStatus.mutateAsync({
+                        quoteId: quote.id,
+                        jobId,
+                        status: "sent",
+                        authorId: user?.id ?? null,
+                      });
+                      await queryClient.invalidateQueries({ queryKey: ["job", jobId] });
+                      await queryClient.invalidateQueries({ queryKey: ["jobs"] });
+                      await queryClient.invalidateQueries({ queryKey: ["quotes", jobId] });
                     }}
-                  >
-                    <Mail className="w-4 h-4 mr-1" />
-                    Pošalji mejl kupcu
-                  </Button>
+                  />
                 </div>
               )}
               {quote.status === "accepted" && (

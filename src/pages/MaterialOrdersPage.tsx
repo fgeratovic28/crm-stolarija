@@ -11,7 +11,7 @@ import { useMaterialOrders } from "@/hooks/use-material-orders";
 
 const filterConfigs: FilterConfig[] = [
   { key: "delivery", label: "Status isporuke", options: [
-    { value: "pending", label: "Na čekanju" }, { value: "shipped", label: "Na putu" },
+    { value: "pending", label: "Na čekanju" }, { value: "email_sent", label: "Poslat mejl" }, { value: "shipped", label: "Na putu" },
     { value: "delivered", label: "Isporučeno" }, { value: "partial", label: "Delimično" },
   ]},
   { key: "paid", label: "Plaćanje", options: [

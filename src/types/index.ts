@@ -221,7 +221,7 @@ export interface MaterialOrder {
   supplierComplaintNote?: string;
   /** Kada je korisnik potvrdio usaglašenost sa učitanim SEF XML-om. */
   sefReconciliationAt?: string;
-  deliveryStatus: "pending" | "shipped" | "delivered" | "partial";
+  deliveryStatus: "pending" | "email_sent" | "shipped" | "delivered" | "partial";
   quantityVerified: boolean; // Keep for display
   allDelivered: boolean;
   job?: {

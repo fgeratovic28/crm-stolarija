@@ -590,6 +590,8 @@ export default function JobDetailsPage() {
             <TabsContent value="quotes"><TabTransition key="quotes"><QuotesTab
                 jobId={id!}
                 quotes={jobQuotes}
+                customerName={job.customer.fullName}
+                customerEmail={job.customer.emails[0]}
                 jobQuoteLines={job.quoteLines}
                 suggestedQuoteTotal={job.totalPrice}
                 defaultPricesIncludeVat={job.pricesIncludeVat}

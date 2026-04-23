@@ -1,0 +1,42 @@
+name: Weekly SQL Backup
+
+on:
+  schedule:
+    - cron: "0 2 * * 0"
+  workflow_dispatch:
+
+jobs:
+  trigger-backup:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Trigger Supabase backup-sql function
+        env:
+          BACKUP_URL: ${{ secrets.SUPABASE_BACKUP_FUNCTION_URL }}
+          CRON_SECRET: ${{ secrets.CRON_SECRET }}
+        run: |
+          if [ -z "$BACKUP_URL" ]; then
+            echo "Missing secret: SUPABASE_BACKUP_FUNCTION_URL"
+            exit 1
+          fi
+          if [ -z "$CRON_SECRET" ]; then
+            echo "Missing secret: CRON_SECRET"
+            exit 1
+          fi
+
+          echo "Calling backup function..."
+          response=$(curl -sS -w "\n%{http_code}" \
+            -X POST "$BACKUP_URL" \
+            -H "Authorization: Bearer $CRON_SECRET" \
+            -H "Content-Type: application/json" \
+            -d '{"trigger":"github-actions-cron"}')
+
+          body=$(echo "$response" | head -n -1)
+          status=$(echo "$response" | tail -n 1)
+
+          echo "HTTP status: $status"
+          echo "Response: $body"
+
+          if [ "$status" -lt 200 ] || [ "$status" -ge 300 ]; then
+            echo "Backup trigger failed."
+            exit 1
+          fi

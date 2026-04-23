@@ -32,7 +32,8 @@ const MATERIAL_TYPE_LABELS: Record<MaterialOrder["materialType"], string> = {
 
 const DELIVERY_STATUS_LABELS: Record<MaterialOrder["deliveryStatus"], string> = {
   pending: "Na čekanju",
-  shipped: "Poslato",
+  email_sent: "Poslat mejl",
+  shipped: "Na putu",
   delivered: "Isporučeno",
   partial: "Delimično isporučeno",
 };

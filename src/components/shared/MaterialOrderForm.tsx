@@ -44,7 +44,8 @@ const EMPTY_NB_DEFAULTS = {
 
 const DELIVERY_STATUSES = [
   { value: "pending", label: "Na čekanju" },
-  { value: "shipped", label: "Poslato" },
+  { value: "email_sent", label: "Poslat mejl" },
+  { value: "shipped", label: "Na putu" },
   { value: "delivered", label: "Isporučeno" },
   { value: "partial", label: "Delimično isporučeno" },
 ];
