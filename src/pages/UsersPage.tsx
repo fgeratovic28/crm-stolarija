@@ -58,6 +58,7 @@ export default function UsersPage() {
   const mutatingBusy = isUpdating || isUpdatingFullName || isUpdatingActive || isRemovingUser;
   const pendingCount = users?.filter((u) => !u.role).length ?? 0;
   const activeCount = users?.filter((u) => u.active).length ?? 0;
+  const assignableRoles = (Object.keys(ROLE_CONFIG) as UserRole[]).filter((role) => role !== "finance");
 
   const getDisplayName = (fullName?: string, name?: string, email?: string) => {
     const candidate = (fullName && fullName.trim()) || (name && name.trim()) || (email?.split("@")[0] ?? "Korisnik");
@@ -235,7 +236,7 @@ export default function UsersPage() {
                               Izmeni ime i prezime
                             </DropdownMenuItem>
                             <DropdownMenuSeparator />
-                            {(Object.keys(ROLE_CONFIG) as UserRole[]).map((role) => (
+                            {assignableRoles.map((role) => (
                               <DropdownMenuItem
                                 key={role}
                                 onClick={() => handleRoleChange(u.id, role)}
@@ -298,7 +299,7 @@ export default function UsersPage() {
                             Izmeni ime i prezime
                           </DropdownMenuItem>
                           <DropdownMenuSeparator />
-                          {(Object.keys(ROLE_CONFIG) as UserRole[]).map((role) => (
+                          {assignableRoles.map((role) => (
                             <DropdownMenuItem
                               key={role}
                               onClick={() => handleRoleChange(u.id, role)}

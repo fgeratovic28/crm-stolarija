@@ -16,6 +16,7 @@ import { Textarea } from "@/components/ui/textarea";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Checkbox } from "@/components/ui/checkbox";
 import { buildVehiclePhotoKey, uploadFileToR2 } from "@/lib/r2-storage";
+import { extensionFromFile, maybeCompressImageForUpload } from "@/lib/compress-image";
 import { toast } from "sonner";
 import { Loader2, Plus, Upload, X } from "lucide-react";
 import type { Vehicle, VehicleStatus } from "@/types";
@@ -132,10 +133,11 @@ export function VehicleForm({ initialData, workers, onSubmit, onCancel, isLoadin
   const additionalImageUrls = form.watch("additionalImageUrls") ?? [];
 
   const uploadToStorage = async (file: File) => {
-    const ext = file.name.split(".").pop() ?? "jpg";
+    const prepared = await maybeCompressImageForUpload(file);
+    const ext = extensionFromFile(prepared);
     const unique = `${Date.now()}_${Math.random().toString(36).slice(2)}.${ext}`;
     const key = buildVehiclePhotoKey(unique);
-    return uploadFileToR2(key, file);
+    return uploadFileToR2(key, prepared);
   };
 
   const handleSingleImageUpload = async (

@@ -44,7 +44,8 @@ export function NarudzbenicaQuickEditDialog({
         <DialogHeader>
           <DialogTitle>Podaci za porudžbenicu</DialogTitle>
           <DialogDescription>
-            Ovde menjate stavke i PDV na porudžbenici. Podaci naručioca su u Podešavanjima.
+            Ovde menjate stavke i PDV (evidencija u CRM-u). Štampani PDF porudžbine prikazuje stavke bez cena; podaci naručioca
+            su u Podešavanjima.
           </DialogDescription>
         </DialogHeader>
         {order && (

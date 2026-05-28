@@ -96,6 +96,39 @@ function extractTaxExclusive(inv: Record<string, unknown>): number | null {
   return pickText(raw) ? v : null;
 }
 
+function extractTaxInclusiveFromTotal(inv: Record<string, unknown>): number | null {
+  const lmt = inv.LegalMonetaryTotal;
+  if (!lmt || typeof lmt !== "object") return null;
+  const t = lmt as Record<string, unknown>;
+  const raw = t.TaxInclusiveAmount ?? t.PayableAmount;
+  const v = parseMoney(pickText(raw));
+  return pickText(raw) ? v : null;
+}
+
+function extractDocumentVatFromInvoice(inv: Record<string, unknown>): number | null {
+  const inc = extractTaxInclusiveFromTotal(inv);
+  const exc = (() => {
+    const lmt = inv.LegalMonetaryTotal;
+    if (!lmt || typeof lmt !== "object") return null;
+    const t = lmt as Record<string, unknown>;
+    const raw = t.TaxExclusiveAmount ?? t.LineExtensionAmount;
+    const v = parseMoney(pickText(raw));
+    return pickText(raw) ? v : null;
+  })();
+  if (inc != null && exc != null && inc > 0 && inc + 0.02 >= exc) {
+    const v = Math.round((inc - exc) * 100) / 100;
+    return v >= 0 ? v : null;
+  }
+  const tt = inv.TaxTotal;
+  for (const block of asArray(tt)) {
+    if (block && typeof block === "object") {
+      const amt = parseMoney(pickText((block as Record<string, unknown>).TaxAmount));
+      if (amt > 0) return Math.round(amt * 100) / 100;
+    }
+  }
+  return null;
+}
+
 function extractDocumentId(inv: Record<string, unknown>): string | undefined {
   const raw = inv.ID ?? inv.Uuid;
   const t = pickText(raw);
@@ -123,6 +156,8 @@ export function parseSupplierInvoiceXml(xml: string): ParsedUblDocument | null {
         return {
           lines,
           taxExclusiveTotal: extractTaxExclusive(inv),
+          taxInclusiveTotal: extractTaxInclusiveFromTotal(inv),
+          documentVatAmount: extractDocumentVatFromInvoice(inv),
           documentNumber: extractDocumentId(inv),
         };
       }

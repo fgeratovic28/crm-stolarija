@@ -89,7 +89,7 @@ function MapDetailsDialog({
               <ClipboardList className="h-3.5 w-3.5" />
               Aktivnosti (poslednjih 12)
             </p>
-            <ScrollArea className="h-52 rounded-md border">
+            <ScrollArea className="h-52 rounded-md border border-border/60 dark:border-white/[0.06]">
               <div className="p-2 space-y-2">
                 {isLoading ? (
                   <p className="text-sm text-muted-foreground p-2">Ucitavanje aktivnosti...</p>
@@ -97,7 +97,10 @@ function MapDetailsDialog({
                   <p className="text-sm text-muted-foreground p-2">Nema aktivnosti za ovaj posao.</p>
                 ) : (
                   activities.map((activity) => (
-                    <div key={activity.id} className="rounded-md border bg-card p-2.5">
+                    <div
+                      key={activity.id}
+                      className="rounded-md border border-border/60 bg-card p-2.5 dark:border-white/[0.06]"
+                    >
                       <div className="flex items-center justify-between gap-2 mb-1">
                         <Badge variant="secondary" className="capitalize">{activity.type.replaceAll("_", " ")}</Badge>
                         <span className="text-xs text-muted-foreground">{formatDateByAppLanguage(activity.createdAt)}</span>
@@ -155,29 +158,25 @@ export default function CompletedJobsMapPage() {
         />
 
         {jobsWithLocation.length === 0 ? (
-          <EmptyState
-            icon={MapPin}
-            title="Nema zavrsenih poslova sa koordinatama"
-            description="Dodajte koordinate na posao (lat/lng) ili unesite ih u adresu u formatu lat,lng da bi marker bio prikazan."
-          />
+          <EmptyState icon={MapPin} title="Nema zavrsenih poslova sa koordinatama" />
         ) : (
           <div className="space-y-3">
             <div className="grid gap-2 sm:grid-cols-3">
-              <div className="rounded-lg border p-3">
+              <div className="rounded-lg border border-border/60 bg-card p-3 dark:border-white/[0.06]">
                 <p className="text-xs text-muted-foreground">Ukupno zavrsenih</p>
                 <p className="text-xl font-semibold">{jobs.length}</p>
               </div>
-              <div className="rounded-lg border p-3">
+              <div className="rounded-lg border border-border/60 bg-card p-3 dark:border-white/[0.06]">
                 <p className="text-xs text-muted-foreground">Sa lokacijom</p>
                 <p className="text-xl font-semibold">{jobsWithLocation.length}</p>
               </div>
-              <div className="rounded-lg border p-3">
+              <div className="rounded-lg border border-border/60 bg-card p-3 dark:border-white/[0.06]">
                 <p className="text-xs text-muted-foreground">Bez lokacije</p>
                 <p className="text-xl font-semibold">{Math.max(0, jobs.length - jobsWithLocation.length)}</p>
               </div>
             </div>
 
-            <div className="h-[560px] w-full overflow-hidden rounded-xl border">
+            <div className="completed-jobs-map h-[560px] w-full overflow-hidden rounded-xl border border-border/60 dark:border-white/[0.06]">
               <MapContainer center={mapCenter} zoom={11} scrollWheelZoom className="h-full w-full z-0">
                 <TileLayer
                   attribution={MAP_TILE_ATTRIBUTION}
@@ -216,7 +215,7 @@ export default function CompletedJobsMapPage() {
                               {job.customerPhone}
                             </p>
                           )}
-                          <p className="flex items-center gap-1 text-xs text-emerald-700">
+                          <p className="flex items-center gap-1 text-xs text-emerald-700 dark:text-emerald-400">
                             <CheckCircle2 className="h-3 w-3" />
                             Zavrsen posao
                           </p>

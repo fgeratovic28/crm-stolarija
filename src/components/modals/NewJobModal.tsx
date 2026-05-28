@@ -6,26 +6,17 @@ import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger } from 
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
-import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
-import { Switch } from "@/components/ui/switch";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import { Command, CommandEmpty, CommandGroup, CommandInput, CommandItem, CommandList } from "@/components/ui/command";
 import { Form, FormControl, FormField, FormItem, FormLabel, FormMessage } from "@/components/ui/form";
 import { Plus, Trash2, Check, ChevronsUpDown } from "lucide-react";
 import { toast } from "sonner";
-import { useJobs, type CreateJobInput, type UpdateJobInput, sumQuoteLineAmounts, computeJobAmountsFromLineSum } from "@/hooks/use-jobs";
+import { useJobs, type CreateJobInput, type UpdateJobInput } from "@/hooks/use-jobs";
 import { useCustomers } from "@/hooks/use-customers";
-import { useTeams } from "@/hooks/use-teams";
-import { formatCurrencyBySettings, readAppSettingsCache } from "@/lib/app-settings";
 import { getInstallationAddressForDisplay } from "@/lib/map-geocode";
+import { AddressMiniMap } from "@/components/shared/AddressMiniMap";
 import type { Customer, Job } from "@/types";
 import { cn } from "@/lib/utils";
-
-function numOr(defaultVal: number, v: unknown): number {
-  if (v === "" || v === null || v === undefined) return defaultVal;
-  const n = Number(v);
-  return Number.isFinite(n) ? n : defaultVal;
-}
 
 /** Poklapanje imena: ceo string ili svaka reč (≥2 znaka) u imenu kupca. */
 function customerNameMatchesTypedSearch(fullName: string, queryRaw: string): boolean {
@@ -38,12 +29,6 @@ function customerNameMatchesTypedSearch(fullName: string, queryRaw: string): boo
   return words.every((w) => name.includes(w));
 }
 
-const lineSchema = z.object({
-  description: z.string().trim().min(1, "Opis stavke je obavezan"),
-  quantity: z.preprocess((v) => numOr(1, v), z.number().positive("Količina mora biti > 0")),
-  unitPrice: z.preprocess((v) => numOr(0, v), z.number().min(0, "Cena mora biti ≥ 0")),
-});
-
 const newJobSchema = z
   .object({
     customerMode: z.enum(["new", "existing"]),
@@ -55,13 +40,11 @@ const newJobSchema = z
     newCustomerPib: z.string().optional(),
     newCustomerRegistrationNumber: z.string().optional(),
     summary: z.string().trim().min(1, "Opis posla je obavezan").max(500, "Najviše 500 karaktera"),
-    pricesIncludeVat: z.boolean(),
-    lines: z.array(lineSchema),
-    advancePayment: z.preprocess((v) => numOr(0, v), z.number().min(0, "Avans ne može biti negativan")),
     billingAddress: z.string().optional(),
     installationAddress: z.string().optional(),
+    installationApartment: z.string().optional(),
+    installationFloor: z.string().optional(),
     customerPhone: z.string().optional(),
-    assignedTeamId: z.string().optional(),
   })
   .superRefine((data, ctx) => {
     if (data.customerMode === "existing") {
@@ -81,7 +64,6 @@ const newJobSchema = z
         });
       }
       const phones = (data.newCustomerPhones ?? []).map((p) => p.value.trim()).filter(Boolean);
-      const emails = (data.newCustomerEmails ?? []).map((e) => e.value.trim()).filter(Boolean);
       if (phones.length === 0) {
         ctx.addIssue({
           code: z.ZodIssueCode.custom,
@@ -89,12 +71,16 @@ const newJobSchema = z
           path: ["newCustomerPhones", 0, "value"],
         });
       }
-      if (emails.length === 0) {
-        ctx.addIssue({
-          code: z.ZodIssueCode.custom,
-          message: "Email kupca je obavezan",
-          path: ["newCustomerEmails", 0, "value"],
-        });
+      const emailCheck = z.string().email();
+      for (let i = 0; i < (data.newCustomerEmails ?? []).length; i++) {
+        const v = (data.newCustomerEmails ?? [])[i]?.value?.trim() ?? "";
+        if (v && !emailCheck.safeParse(v).success) {
+          ctx.addIssue({
+            code: z.ZodIssueCode.custom,
+            message: "Nevažeća email adresa",
+            path: ["newCustomerEmails", i, "value"],
+          });
+        }
       }
       if (!data.billingAddress?.trim()) {
         ctx.addIssue({
@@ -118,10 +104,26 @@ const newJobSchema = z
         });
       }
     }
-
   });
 
 type NewJobValues = z.infer<typeof newJobSchema>;
+
+const emptyNewJobFormValues = (): NewJobValues => ({
+  customerMode: "new",
+  customerId: "",
+  newCustomerFullName: "",
+  newCustomerContactPerson: "",
+  newCustomerPhones: [{ value: "" }],
+  newCustomerEmails: [{ value: "" }],
+  newCustomerPib: "",
+  newCustomerRegistrationNumber: "",
+  summary: "",
+  billingAddress: "",
+  installationAddress: "",
+  installationApartment: "",
+  installationFloor: "",
+  customerPhone: "",
+});
 
 interface NewJobModalProps {
   trigger?: React.ReactNode;
@@ -133,32 +135,13 @@ export function NewJobModal({ trigger, job }: NewJobModalProps) {
   const [customerSelectOpen, setCustomerSelectOpen] = useState(false);
   const [customerSearch, setCustomerSearch] = useState("");
   const { customers = [], createCustomer } = useCustomers();
-  const { teams = [] } = useTeams();
   const { createJob, updateJob } = useJobs();
 
   const form = useForm<NewJobValues>({
     resolver: zodResolver(newJobSchema),
-    defaultValues: {
-      customerMode: "new",
-      customerId: "",
-      newCustomerFullName: "",
-      newCustomerContactPerson: "",
-      newCustomerPhones: [{ value: "" }],
-      newCustomerEmails: [{ value: "" }],
-      newCustomerPib: "",
-      newCustomerRegistrationNumber: "",
-      summary: "",
-      pricesIncludeVat: true,
-      lines: [{ description: "", quantity: 1, unitPrice: 0 }],
-      advancePayment: 0,
-      billingAddress: "",
-      installationAddress: "",
-      customerPhone: "",
-      assignedTeamId: "",
-    },
+    defaultValues: emptyNewJobFormValues(),
   });
 
-  const { fields, append, remove } = useFieldArray({ control: form.control, name: "lines" });
   const { fields: customerPhoneFields, append: appendCustomerPhone, remove: removeCustomerPhone } = useFieldArray({
     control: form.control,
     name: "newCustomerPhones",
@@ -172,10 +155,8 @@ export function NewJobModal({ trigger, job }: NewJobModalProps) {
   const selectedCustomerId = useWatch({ control: form.control, name: "customerId" });
   const newCustomerFullNameWatched = useWatch({ control: form.control, name: "newCustomerFullName" });
   const newCustomerPhones = useWatch({ control: form.control, name: "newCustomerPhones" });
-  const watchedLines = useWatch({ control: form.control, name: "lines" });
-  const watchedVat = useWatch({ control: form.control, name: "pricesIncludeVat" });
+  const installationAddressWatch = useWatch({ control: form.control, name: "installationAddress" });
 
-  /** Samo pri promeni izabranog klijenta (ne pri svakom refetch-u liste) — da korisnik može drugačiju adresu za posao. */
   const lastPrefilledCustomerIdRef = useRef<string | null>(null);
 
   useEffect(() => {
@@ -192,16 +173,6 @@ export function NewJobModal({ trigger, job }: NewJobModalProps) {
     }
   }, [open, job?.id, job?.customer?.id]);
 
-  const pricingPreview = useMemo(() => {
-    const sum = sumQuoteLineAmounts(
-      (watchedLines || []).map((l) => ({
-        quantity: Number(l.quantity) || 0,
-        unitPrice: Number(l.unitPrice) || 0,
-      })),
-    );
-    return computeJobAmountsFromLineSum(sum, watchedVat !== false);
-  }, [watchedLines, watchedVat]);
-
   const selectedCustomer = useMemo(
     () => customers.find((c) => c.id === selectedCustomerId),
     [customers, selectedCustomerId],
@@ -217,7 +188,6 @@ export function NewJobModal({ trigger, job }: NewJobModalProps) {
     });
   }, [customers, customerSearch]);
 
-  /** Predlog postojećih kupaca dok se u režimu „Novi kupac“ kuca ime. */
   const newCustomerNameSuggestions = useMemo(() => {
     const q = (newCustomerFullNameWatched ?? "").trim();
     if (q.length < 2) return [];
@@ -238,9 +208,14 @@ export function NewJobModal({ trigger, job }: NewJobModalProps) {
   }, [customers, newCustomerFullNameWatched]);
 
   const applyCustomerFromNameSuggestion = (c: Customer) => {
-    lastPrefilledCustomerIdRef.current = null;
+    lastPrefilledCustomerIdRef.current = c.id;
     form.setValue("customerMode", "existing");
     form.setValue("customerId", c.id);
+    form.setValue("billingAddress", c.billingAddress);
+    form.setValue("installationAddress", c.installationAddress);
+    form.setValue("installationApartment", c.installationApartment || "");
+    form.setValue("installationFloor", c.installationFloor || "");
+    form.setValue("customerPhone", c.phones[0] || "");
     form.setValue("newCustomerFullName", "");
     form.setValue("newCustomerContactPerson", "");
     form.setValue("newCustomerPhones", [{ value: "" }]);
@@ -263,6 +238,8 @@ export function NewJobModal({ trigger, job }: NewJobModalProps) {
 
     form.setValue("billingAddress", customer.billingAddress);
     form.setValue("installationAddress", customer.installationAddress);
+    form.setValue("installationApartment", customer.installationApartment || "");
+    form.setValue("installationFloor", customer.installationFloor || "");
     form.setValue("customerPhone", customer.phones[0] || "");
     lastPrefilledCustomerIdRef.current = selectedCustomerId;
   }, [selectedCustomerId, customers, form]);
@@ -283,6 +260,8 @@ export function NewJobModal({ trigger, job }: NewJobModalProps) {
           contactPerson: data.newCustomerContactPerson?.trim() || data.newCustomerFullName?.trim() || "",
           billingAddress: data.billingAddress?.trim() || "",
           installationAddress: data.installationAddress?.trim() || "",
+          installationApartment: data.installationApartment?.trim() || undefined,
+          installationFloor: data.installationFloor?.trim() || undefined,
           phones: (data.newCustomerPhones ?? []).map((p) => p.value.trim()).filter(Boolean),
           emails: (data.newCustomerEmails ?? []).map((e) => e.value.trim()).filter(Boolean),
           pib: data.newCustomerPib?.trim() || "",
@@ -294,18 +273,11 @@ export function NewJobModal({ trigger, job }: NewJobModalProps) {
       const payloadBase: CreateJobInput = {
         customerId,
         summary: data.summary,
-        pricesIncludeVat: data.pricesIncludeVat,
-        quoteLines: data.lines.map((l, i) => ({
-          description: l.description,
-          quantity: l.quantity,
-          unitPrice: l.unitPrice,
-          sortOrder: i,
-        })),
-        advancePayment: data.advancePayment,
         billingAddress: data.billingAddress?.trim() || undefined,
         installationAddress: data.installationAddress?.trim() || undefined,
+        installationApartment: data.installationApartment?.trim() || undefined,
+        installationFloor: data.installationFloor?.trim() || undefined,
         customerPhone: data.customerPhone?.trim() || undefined,
-        assignedTeamId: data.assignedTeamId || undefined,
       };
 
       if (job) {
@@ -322,24 +294,7 @@ export function NewJobModal({ trigger, job }: NewJobModalProps) {
       }
 
       await createJob.mutateAsync(payloadBase);
-      form.reset({
-        customerMode: "new",
-        customerId: "",
-        newCustomerFullName: "",
-        newCustomerContactPerson: "",
-        newCustomerPhones: [{ value: "" }],
-        newCustomerEmails: [{ value: "" }],
-        newCustomerPib: "",
-        newCustomerRegistrationNumber: "",
-        summary: "",
-        pricesIncludeVat: true,
-        lines: [{ description: "", quantity: 1, unitPrice: 0 }],
-        advancePayment: 0,
-        billingAddress: "",
-        installationAddress: "",
-        customerPhone: "",
-        assignedTeamId: "",
-      });
+      form.reset(emptyNewJobFormValues());
       setOpen(false);
     } catch {
       // Toast poruke se prikazuju iz mutacija.
@@ -359,24 +314,13 @@ export function NewJobModal({ trigger, job }: NewJobModalProps) {
       newCustomerPib: "",
       newCustomerRegistrationNumber: "",
       summary: job.summary || "",
-      pricesIncludeVat: job.pricesIncludeVat !== false,
-      lines: job.quoteLines.length > 0
-        ? job.quoteLines.map((line) => ({
-            description: line.description,
-            quantity: line.quantity,
-            unitPrice: line.unitPrice,
-          }))
-        : [{ description: "", quantity: 1, unitPrice: 0 }],
-      advancePayment: Number(job.advancePayment) || 0,
       billingAddress: job.jobBillingAddress || job.customer.billingAddress || "",
       installationAddress: getInstallationAddressForDisplay(job) || "",
+      installationApartment: job.jobInstallationApartment || "",
+      installationFloor: job.jobInstallationFloor || "",
       customerPhone: job.customerPhone || job.customer.phones?.[0] || "",
-      assignedTeamId: "",
     });
   }, [open, job, form]);
-
-  const formatCurrency = (n: number) => formatCurrencyBySettings(n);
-  const appSettings = readAppSettingsCache();
 
   return (
     <Dialog open={open} onOpenChange={setOpen}>
@@ -395,7 +339,7 @@ export function NewJobModal({ trigger, job }: NewJobModalProps) {
           <form
             onSubmit={form.handleSubmit(onSubmit, () => {
               toast.error("Proverite formular", {
-                description: "Popunite sva obavezna polja, bar jednu stavku ponude sa cenom > 0 i validan klijent.",
+                description: "Popunite sva obavezna polja i validan klijent.",
               });
             })}
             className="space-y-4"
@@ -408,7 +352,7 @@ export function NewJobModal({ trigger, job }: NewJobModalProps) {
                   <FormItem>
                     <FormLabel>Tip kupca</FormLabel>
                     <FormControl>
-                      <div className="grid grid-cols-2 rounded-md border p-1">
+                      <div className="grid grid-cols-2 rounded-md bg-muted/40 p-1 dark:bg-muted/30">
                         <Button
                           type="button"
                           variant={field.value === "existing" ? "secondary" : "ghost"}
@@ -479,7 +423,7 @@ export function NewJobModal({ trigger, job }: NewJobModalProps) {
                                         {c.phones[0] || "bez telefona"} · {c.installationAddress || c.billingAddress}
                                       </span>
                                     </div>
-                                    <span className="shrink-0 rounded-full border px-2 py-0.5 text-[10px] font-medium text-muted-foreground">
+                                    <span className="shrink-0 rounded-full border border-border/60 px-2 py-0.5 text-[10px] font-medium text-muted-foreground dark:border-white/[0.1]">
                                       {c.customerNumber}
                                     </span>
                                   </div>
@@ -492,7 +436,8 @@ export function NewJobModal({ trigger, job }: NewJobModalProps) {
                     </Popover>
                     {selectedCustomer && (
                       <p className="text-xs text-muted-foreground mt-1">
-                        {selectedCustomer.customerNumber} · {selectedCustomer.phones[0] || "Bez telefona"} · {selectedCustomer.installationAddress || selectedCustomer.billingAddress}
+                        {selectedCustomer.customerNumber} · {selectedCustomer.phones[0] || "Bez telefona"} ·{" "}
+                        {selectedCustomer.installationAddress || selectedCustomer.billingAddress}
                       </p>
                     )}
                     <FormMessage />
@@ -502,62 +447,64 @@ export function NewJobModal({ trigger, job }: NewJobModalProps) {
             )}
 
             {!job && customerMode === "new" && (
-              <div className="space-y-4 overflow-visible border rounded-lg p-3">
+              <div className="space-y-4 overflow-visible rounded-lg bg-muted/25 p-3 dark:bg-muted/20">
                 <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-                <FormField
-                  control={form.control}
-                  name="newCustomerFullName"
-                  render={({ field }) => (
-                    <FormItem>
-                      <FormLabel>Ime i prezime kupca</FormLabel>
-                      <FormControl>
-                        <Input placeholder="npr. Marko Petrović" autoComplete="off" {...field} />
-                      </FormControl>
-                      {newCustomerNameSuggestions.length > 0 && (
-                        <div
-                          className="mt-1.5 w-full overflow-hidden rounded-md border border-border bg-muted/30 text-foreground shadow-sm"
-                          role="listbox"
-                          aria-label="Poklapanja u bazi kupaca"
-                        >
-                          <p className="border-b border-border bg-muted/50 px-2 py-1.5 text-[11px] text-muted-foreground">
-                            Postojeći kupci sa sličnim imenom — klik učitava podatke (prelazak na „Postojeći kupac“)
-                          </p>
-                          <ul className="max-h-48 overflow-y-auto py-1">
-                            {newCustomerNameSuggestions.map((c) => (
-                              <li key={c.id} role="option">
-                                <button
-                                  type="button"
-                                  className="flex w-full items-start gap-2 px-2 py-2 text-left text-sm hover:bg-background/90"
-                                  onMouseDown={(e) => e.preventDefault()}
-                                  onClick={() => applyCustomerFromNameSuggestion(c)}
-                                >
-                                  <span className="min-w-0 flex-1">
-                                    <span className="block truncate font-medium text-foreground">{c.fullName}</span>
-                                    <span className="block truncate text-xs text-muted-foreground">
-                                      {c.phones[0] || "bez telefona"} · {c.customerNumber}
+                  <FormField
+                    control={form.control}
+                    name="newCustomerFullName"
+                    render={({ field }) => (
+                      <FormItem>
+                        <FormLabel>Ime i prezime kupca</FormLabel>
+                        <FormControl>
+                          <Input placeholder="npr. Marko Petrović" autoComplete="off" {...field} />
+                        </FormControl>
+                        {newCustomerNameSuggestions.length > 0 && (
+                          <div
+                            className="mt-1.5 w-full overflow-hidden rounded-md border border-border/55 bg-muted/30 text-foreground shadow-sm dark:border-white/[0.06]"
+                            role="listbox"
+                            aria-label="Poklapanja u bazi kupaca"
+                          >
+                            <p className="border-b border-border/55 bg-muted/50 px-2 py-1.5 text-[11px] text-muted-foreground dark:border-white/[0.06]">
+                              Postojeći kupci sa sličnim imenom — klik učitava podatke (prelazak na „Postojeći kupac“)
+                            </p>
+                            <ul className="max-h-48 overflow-y-auto py-1">
+                              {newCustomerNameSuggestions.map((c) => (
+                                <li key={c.id} role="option">
+                                  <button
+                                    type="button"
+                                    className="flex w-full items-start gap-2 px-2 py-2 text-left text-sm hover:bg-background/90"
+                                    onMouseDown={(e) => e.preventDefault()}
+                                    onClick={() => applyCustomerFromNameSuggestion(c)}
+                                  >
+                                    <span className="min-w-0 flex-1">
+                                      <span className="block truncate font-medium text-foreground">{c.fullName}</span>
+                                      <span className="block truncate text-xs text-muted-foreground">
+                                        {c.phones[0] || "bez telefona"} · {c.customerNumber}
+                                      </span>
                                     </span>
-                                  </span>
-                                </button>
-                              </li>
-                            ))}
-                          </ul>
-                        </div>
-                      )}
-                      <FormMessage />
-                    </FormItem>
-                  )}
-                />
-                <FormField
-                  control={form.control}
-                  name="newCustomerContactPerson"
-                  render={({ field }) => (
-                    <FormItem>
-                      <FormLabel>Kontakt osoba (opciono)</FormLabel>
-                      <FormControl><Input placeholder="Ako je firma, unesite kontakt osobu" {...field} /></FormControl>
-                      <FormMessage />
-                    </FormItem>
-                  )}
-                />
+                                  </button>
+                                </li>
+                              ))}
+                            </ul>
+                          </div>
+                        )}
+                        <FormMessage />
+                      </FormItem>
+                    )}
+                  />
+                  <FormField
+                    control={form.control}
+                    name="newCustomerContactPerson"
+                    render={({ field }) => (
+                      <FormItem>
+                        <FormLabel>Kontakt osoba (opciono)</FormLabel>
+                        <FormControl>
+                          <Input placeholder="Ako je firma, unesite kontakt osobu" {...field} />
+                        </FormControl>
+                        <FormMessage />
+                      </FormItem>
+                    )}
+                  />
                 </div>
 
                 <div className="space-y-2">
@@ -574,7 +521,9 @@ export function NewJobModal({ trigger, job }: NewJobModalProps) {
                         name={`newCustomerPhones.${index}.value`}
                         render={({ field: f }) => (
                           <FormItem className="flex-1">
-                            <FormControl><Input placeholder="+381 6..." {...f} /></FormControl>
+                            <FormControl>
+                              <Input placeholder="+381 6..." {...f} />
+                            </FormControl>
                             <FormMessage />
                           </FormItem>
                         )}
@@ -590,7 +539,7 @@ export function NewJobModal({ trigger, job }: NewJobModalProps) {
 
                 <div className="space-y-2">
                   <div className="flex items-center justify-between gap-2">
-                    <FormLabel>Email adrese</FormLabel>
+                    <FormLabel>Email adrese (opciono)</FormLabel>
                     <Button type="button" size="sm" variant="outline" onClick={() => appendCustomerEmail({ value: "" })}>
                       <Plus className="w-3 h-3 mr-1" /> Dodaj email
                     </Button>
@@ -602,7 +551,9 @@ export function NewJobModal({ trigger, job }: NewJobModalProps) {
                         name={`newCustomerEmails.${index}.value`}
                         render={({ field: f }) => (
                           <FormItem className="flex-1">
-                            <FormControl><Input placeholder="adresa@email.com" {...f} /></FormControl>
+                            <FormControl>
+                              <Input placeholder="adresa@email.com" {...f} />
+                            </FormControl>
                             <FormMessage />
                           </FormItem>
                         )}
@@ -623,7 +574,9 @@ export function NewJobModal({ trigger, job }: NewJobModalProps) {
                     render={({ field }) => (
                       <FormItem>
                         <FormLabel>PIB (opciono)</FormLabel>
-                        <FormControl><Input placeholder="Poreski broj" {...field} /></FormControl>
+                        <FormControl>
+                          <Input placeholder="Poreski broj" {...field} />
+                        </FormControl>
                         <FormMessage />
                       </FormItem>
                     )}
@@ -634,7 +587,9 @@ export function NewJobModal({ trigger, job }: NewJobModalProps) {
                     render={({ field }) => (
                       <FormItem>
                         <FormLabel>Matični broj (opciono)</FormLabel>
-                        <FormControl><Input placeholder="Matični broj firme" {...field} /></FormControl>
+                        <FormControl>
+                          <Input placeholder="Matični broj firme" {...field} />
+                        </FormControl>
                         <FormMessage />
                       </FormItem>
                     )}
@@ -643,7 +598,7 @@ export function NewJobModal({ trigger, job }: NewJobModalProps) {
               </div>
             )}
 
-            <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 border-t border-border pt-4">
+            <div className="grid grid-cols-1 gap-4 border-t border-border/55 pt-4 dark:border-white/[0.06]">
               {(job || customerMode === "new") && (
                 <FormField
                   control={form.control}
@@ -659,157 +614,7 @@ export function NewJobModal({ trigger, job }: NewJobModalProps) {
                   )}
                 />
               )}
-              <FormField
-                control={form.control}
-                name="assignedTeamId"
-                render={({ field }) => (
-                  <FormItem>
-                    <FormLabel>Odgovorni tim (opciono)</FormLabel>
-                    <Select onValueChange={(v) => field.onChange(v === "none" ? "" : v)} value={field.value || "none"}>
-                      <FormControl>
-                        <SelectTrigger>
-                          <SelectValue placeholder="Izaberite tim" />
-                        </SelectTrigger>
-                      </FormControl>
-                      <SelectContent>
-                        <SelectItem value="none">Bez dodele</SelectItem>
-                        {teams.length === 0 ? (
-                          <SelectItem value="no-teams" disabled>
-                            Nema timova u bazi
-                          </SelectItem>
-                        ) : (
-                          teams.map((t) => (
-                            <SelectItem key={t.id} value={t.id}>
-                              {t.name}
-                              {!t.active ? " (neaktivan)" : ""}
-                            </SelectItem>
-                          ))
-                        )}
-                      </SelectContent>
-                    </Select>
-                    <FormMessage />
-                  </FormItem>
-                )}
-              />
             </div>
-
-            <div className="border border-border rounded-lg p-3 space-y-3">
-              <div className="flex items-center justify-between gap-2">
-                <FormLabel className="text-base">Stavke ponude</FormLabel>
-                <Button
-                  type="button"
-                  variant="outline"
-                  size="sm"
-                  onClick={() => append({ description: "", quantity: 1, unitPrice: 0 })}
-                >
-                  <Plus className="w-4 h-4 mr-1" /> Dodaj stavku
-                </Button>
-              </div>
-              <div className="space-y-3">
-                {fields.map((field, index) => (
-                  <div key={field.id} className="grid grid-cols-1 sm:grid-cols-12 gap-2 items-start border-b border-border/60 pb-3 last:border-0 last:pb-0">
-                    <div className="sm:col-span-6">
-                      <FormField
-                        control={form.control}
-                        name={`lines.${index}.description`}
-                        render={({ field: f }) => (
-                          <FormItem>
-                            <FormLabel className="text-xs text-muted-foreground">Opis</FormLabel>
-                            <FormControl>
-                              <Input placeholder="npr. PVC prozor 120×140" {...f} />
-                            </FormControl>
-                            <FormMessage />
-                          </FormItem>
-                        )}
-                      />
-                    </div>
-                    <div className="sm:col-span-2">
-                      <FormField
-                        control={form.control}
-                        name={`lines.${index}.quantity`}
-                        render={({ field: f }) => (
-                          <FormItem>
-                            <FormLabel className="text-xs text-muted-foreground">Kol.</FormLabel>
-                            <FormControl>
-                              <Input type="number" min={0.01} step="0.01" {...f} />
-                            </FormControl>
-                            <FormMessage />
-                          </FormItem>
-                        )}
-                      />
-                    </div>
-                    <div className="sm:col-span-3">
-                      <FormField
-                        control={form.control}
-                        name={`lines.${index}.unitPrice`}
-                        render={({ field: f }) => (
-                          <FormItem>
-                            <FormLabel className="text-xs text-muted-foreground">{`Jed. cena (${appSettings.currency})`}</FormLabel>
-                            <FormControl>
-                              <Input type="number" min={0} step="0.01" {...f} />
-                            </FormControl>
-                            <FormMessage />
-                          </FormItem>
-                        )}
-                      />
-                    </div>
-                    <div className="sm:col-span-1 flex sm:items-end pt-2 sm:pt-0">
-                      <Button
-                        type="button"
-                        variant="ghost"
-                        size="icon"
-                        className="text-muted-foreground shrink-0"
-                        disabled={fields.length <= 1}
-                        onClick={() => remove(index)}
-                        aria-label="Ukloni stavku"
-                      >
-                        <Trash2 className="w-4 h-4" />
-                      </Button>
-                    </div>
-                    <div className="sm:col-span-12 flex justify-end">
-                      <p className="text-xs text-muted-foreground">
-                        Ukupna procenjena cena:{" "}
-                        <span className="text-foreground font-medium">
-                          {formatCurrency((Number(watchedLines?.[index]?.quantity) || 0) * (Number(watchedLines?.[index]?.unitPrice) || 0))}
-                        </span>
-                      </p>
-                    </div>
-                  </div>
-                ))}
-              </div>
-            </div>
-
-            <FormField
-              control={form.control}
-              name="pricesIncludeVat"
-              render={({ field }) => (
-                <FormItem className="border border-border rounded-lg p-3 bg-muted/20">
-                  <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between sm:gap-4">
-                    <div className="min-w-0 space-y-1">
-                      <FormLabel htmlFor="prices-include-vat" className="cursor-pointer">
-                        Dodaj PDV 20% na stavke
-                      </FormLabel>
-                      <p className="text-xs text-muted-foreground">
-                        Ako je uključeno, PDV 20% se dodaje na zbir stavki.
-                      </p>
-                    </div>
-                    <FormControl className="shrink-0 sm:pt-0.5">
-                      <Switch
-                        id="prices-include-vat"
-                        checked={field.value}
-                        onCheckedChange={field.onChange}
-                        aria-label="Uključi ili isključi PDV"
-                      />
-                    </FormControl>
-                  </div>
-                  <div className="mt-3 pt-3 border-t border-border text-xs text-muted-foreground leading-relaxed">
-                    Osnovica {formatCurrency(pricingPreview.priceWithoutVat)} · PDV 20% {formatCurrency(pricingPreview.vatAmount)} ·{" "}
-                    <span className="text-foreground font-semibold">za naplatu {formatCurrency(pricingPreview.totalPrice)}</span>
-                  </div>
-                  <FormMessage />
-                </FormItem>
-              )}
-            />
 
             {(job || customerMode === "new") && (
               <FormField
@@ -835,19 +640,63 @@ export function NewJobModal({ trigger, job }: NewJobModalProps) {
                   <FormItem>
                     <FormLabel>Adresa ugradnje (za ovaj posao)</FormLabel>
                     <FormControl>
-                      <Input
-                        placeholder="Npr. Bulevar kralja Aleksandra 73, Beograd"
-                        {...field}
-                      />
+                      <Input placeholder="Npr. Bulevar kralja Aleksandra 73, Beograd" {...field} />
                     </FormControl>
                     <p className="text-xs text-muted-foreground leading-snug">
-                      Za mapu unesite što precizniju adresu: ulica i broj, naselje, grad/opština (izbegavajte skraćenice ako
-                      može).
+                      Za mapu unesite što precizniju adresu: ulica i broj, naselje, grad/opština. Možete i koordinate (npr.{" "}
+                      <span className="font-mono text-[11px]">44.7866, 20.4489</span>) — mapa ih prepoznaje odmah.
                     </p>
                     <FormMessage />
                   </FormItem>
                 )}
               />
+            )}
+
+            {(job || customerMode === "new") && (
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                <FormField
+                  control={form.control}
+                  name="installationFloor"
+                  render={({ field }) => (
+                    <FormItem>
+                      <FormLabel>Sprat (opciono)</FormLabel>
+                      <FormControl>
+                        <Input placeholder="npr. 3" {...field} />
+                      </FormControl>
+                      <FormMessage />
+                    </FormItem>
+                  )}
+                />
+                <FormField
+                  control={form.control}
+                  name="installationApartment"
+                  render={({ field }) => (
+                    <FormItem>
+                      <FormLabel>Stan (opciono)</FormLabel>
+                      <FormControl>
+                        <Input placeholder="npr. 12" {...field} />
+                      </FormControl>
+                      <FormMessage />
+                    </FormItem>
+                  )}
+                />
+              </div>
+            )}
+
+            {(job || customerMode === "new") && (
+              <div className="space-y-2 rounded-lg border border-border/80 bg-muted/20 p-3">
+                <p className="text-xs font-medium text-muted-foreground">Pregled adrese ugradnje na mapi</p>
+                {installationAddressWatch?.trim() ? (
+                  <AddressMiniMap
+                    address={installationAddressWatch}
+                    className="mt-0 h-36 sm:h-40 rounded-lg border border-border/80 bg-background shadow-sm [&_.leaflet-container]:rounded-lg"
+                  />
+                ) : (
+                  <p className="text-xs text-muted-foreground py-6 text-center">
+                    Unesite adresu ili koordinate iznad da proverite lokaciju na mapi.
+                  </p>
+                )}
+              </div>
             )}
 
             <FormField
@@ -863,21 +712,6 @@ export function NewJobModal({ trigger, job }: NewJobModalProps) {
                 </FormItem>
               )}
             />
-
-            <FormField
-              control={form.control}
-              name="advancePayment"
-              render={({ field }) => (
-                <FormItem>
-                  <FormLabel>{`Avansna uplata (${appSettings.currency})`}</FormLabel>
-                  <FormControl>
-                    <Input type="number" min={0} placeholder="0" {...field} />
-                  </FormControl>
-                  <FormMessage />
-                </FormItem>
-              )}
-            />
-
 
             <div className="flex flex-col-reverse gap-2 pt-2 sm:flex-row sm:justify-end sm:gap-2 [&>button]:w-full sm:[&>button]:w-auto">
               <Button type="button" variant="outline" onClick={() => setOpen(false)}>

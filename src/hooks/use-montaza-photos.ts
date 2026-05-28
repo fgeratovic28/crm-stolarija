@@ -1,7 +1,7 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { supabase } from "@/lib/supabase";
 import { useAuthStore } from "@/stores/auth-store";
-import { compressImageForUpload } from "@/lib/compress-image";
+import { maybeCompressImageForUpload } from "@/lib/compress-image";
 import { buildWorkOrderMontazaImageKey, deleteObjectFromR2, uploadFileToR2 } from "@/lib/r2-storage";
 import { toast } from "sonner";
 
@@ -36,9 +36,10 @@ export function useUploadMontazaPhoto() {
 
   return useMutation({
     mutationFn: async ({ workOrderId, file }: { workOrderId: string; file: File }) => {
-      const compressed = await compressImageForUpload(file);
-      const ext = compressed.name.split(".").pop() || "jpg";
-      const unique = `${Date.now()}_${Math.random().toString(36).slice(2)}.${ext}`;
+      const compressed = await maybeCompressImageForUpload(file);
+      const ext = compressed.name.includes(".") ? compressed.name.split(".").pop() : undefined;
+      const extSafe = ext && /^[a-z0-9]{1,8}$/i.test(ext) ? ext : "jpg";
+      const unique = `${Date.now()}_${Math.random().toString(36).slice(2)}.${extSafe}`;
       const storageKey = buildWorkOrderMontazaImageKey(workOrderId, unique);
       const imageUrl = await uploadFileToR2(storageKey, compressed);
 

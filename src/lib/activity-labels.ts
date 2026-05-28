@@ -12,7 +12,7 @@ const WORK_ORDER_TYPE_LABELS: Record<WorkOrderType, string> = {
 };
 
 const WORK_ORDER_STATUS_LABELS: Record<WorkOrder["status"], string> = {
-  pending: "Čeka",
+  pending: "Na čekanju",
   in_progress: "U toku",
   completed: "Završen",
   canceled: "Otkazan",
@@ -33,9 +33,14 @@ const MATERIAL_TYPE_LABELS: Record<MaterialOrder["materialType"], string> = {
 const DELIVERY_STATUS_LABELS: Record<MaterialOrder["deliveryStatus"], string> = {
   pending: "Na čekanju",
   email_sent: "Poslat mejl",
+  sent_to_supplier: "Poslato dobavljaču",
+  waiting_for_payment: "Čeka uplatu",
+  waiting_for_delivery: "Plaćeno i čeka se prijem robe i faktura",
   shipped: "Na putu",
   delivered: "Isporučeno",
   partial: "Delimično isporučeno",
+  materials_received: "Materijal primljen (magacin)",
+  received_with_issues: "Primljeno sa reklamacijom",
 };
 
 const FILE_CATEGORY_LABELS: Record<FileCategory, string> = {
@@ -49,10 +54,11 @@ const FILE_CATEGORY_LABELS: Record<FileCategory, string> = {
 };
 
 const QUOTE_STATUS_LABELS: Record<QuoteStatus, string> = {
-  draft: "Draft",
+  draft: "Nacrt",
   sent: "Poslata",
   accepted: "Prihvaćena",
   rejected: "Odbijena",
+  zamenjena: "Zamenjena",
 };
 
 export const labelJobStatus = (status: JobStatus | string) =>

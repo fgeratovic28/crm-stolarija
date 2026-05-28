@@ -92,7 +92,7 @@ export function useJobItems(jobId?: string) {
       const jobNumber = await resolveJobNumber(targetJobId);
       await upsertSystemActivity({
         jobId: targetJobId,
-        description: `Posao ${jobNumber}: Import krojne liste (${rows.length} stavki)`,
+        description: `Posao ${jobNumber}: uvezena krojna lista (${rows.length} stavki)`,
         systemKey: `job-items-import:${targetJobId}:${rows.length}`,
       });
       const { data: existingProdOrders, error: prodErr } = await supabase
@@ -127,6 +127,7 @@ export function useJobItems(jobId?: string) {
     },
     onSuccess: (_, vars) => {
       queryClient.invalidateQueries({ queryKey: ["job-items", vars.jobId] });
+      void queryClient.invalidateQueries({ queryKey: ["work-orders", vars.jobId] });
       toast.success("Krojna lista je uspešno importovana");
     },
     onError: (error: unknown) => {
@@ -138,6 +139,20 @@ export function useJobItems(jobId?: string) {
 
   const completeByBarcode = useMutation({
     mutationFn: async ({ jobId: targetJobId, barcode }: { jobId: string; barcode: string }) => {
+      const { data: prodWoRows, error: prodWoErr } = await supabase
+        .from("work_orders")
+        .select("id,status")
+        .eq("job_id", targetJobId)
+        .eq("type", "production")
+        .limit(1);
+      if (prodWoErr) throw prodWoErr;
+      const prodSt = prodWoRows?.[0]?.status;
+      if (prodSt === "pending") {
+        throw new Error(
+          "Skeniranje nije moguće dok proizvodni nalog nije u toku. Kliknite „Započni proizvodnju” iznad, pa zatim skenirajte bar kodove.",
+        );
+      }
+
       const normalizedInput = normalizeBarcode(barcode);
       const { data, error } = await supabase
         .from("job_items")
@@ -167,7 +182,7 @@ export function useJobItems(jobId?: string) {
         jobNumber = await resolveJobNumber(targetJobId);
         await upsertSystemActivity({
           jobId: targetJobId,
-          description: `Posao ${jobNumber}: Skeniran bar kod ${barcode}`,
+          description: `Posao ${jobNumber}: skeniran barkod ${barcode}`,
           systemKey: `job-item-scan:${targetJobId}:${barcode}`,
         });
       } catch (err) {
@@ -177,35 +192,9 @@ export function useJobItems(jobId?: string) {
 
       if ((remaining ?? []).length === 0) {
         try {
-          const { data: productionOrders, error: prodErr } = await supabase
-            .from("work_orders")
-            .select("id,status")
-            .eq("job_id", targetJobId)
-            .eq("type", "production")
-            .in("status", ["pending", "in_progress"]);
-          if (prodErr) throw prodErr;
-
-          for (const order of productionOrders ?? []) {
-            const { error: closeErr } = await supabase
-              .from("work_orders")
-              .update({ status: "completed" })
-              .eq("id", order.id);
-            if (closeErr) throw closeErr;
-            await upsertSystemActivity({
-              jobId: targetJobId,
-              description: `Posao ${jobNumber}: Proizvodni nalog završen (sve stavke skenirane)`,
-              systemKey: `production-order-auto-complete:${order.id}`,
-            });
-          }
-
-          try {
-            await recomputeJobStatus(targetJobId);
-          } catch (err) {
-            console.warn("Job status recompute after production completion failed:", err);
-          }
+          await recomputeJobStatus(targetJobId);
         } catch (err) {
-          // Keep scan successful even if auto-complete/status workflow fails.
-          console.warn("Post-scan production auto-complete failed:", err);
+          console.warn("Job status recompute after all items scanned failed:", err);
         }
       }
       return {

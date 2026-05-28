@@ -2,7 +2,7 @@ import { useEffect } from "react";
 import { QueryClient, QueryClientProvider, hashKey, useQueryClient } from "@tanstack/react-query";
 import { getReactQueryWindowScope } from "@/lib/react-query-window-scope";
 import { applyDocumentLanguageFromCache } from "@/lib/app-settings";
-import { BrowserRouter, HashRouter, Route, Routes, Navigate } from "react-router-dom";
+import { BrowserRouter, HashRouter, Navigate, Route, Routes, useParams } from "react-router-dom";
 import { Toaster as Sonner } from "@/components/ui/sonner";
 import { Toaster } from "@/components/ui/toaster";
 import { TooltipProvider } from "@/components/ui/tooltip";
@@ -18,6 +18,8 @@ import CustomersPage from "./pages/CustomersPage";
 import ActivitiesPage from "./pages/ActivitiesPage";
 import FinancesPage from "./pages/FinancesPage";
 import MaterialOrdersPage from "./pages/MaterialOrdersPage";
+import OrderReception from "./pages/OrderReception";
+import MaterialReceptionPage from "./pages/MaterialReceptionPage";
 import WorkOrdersPage from "./pages/WorkOrdersPage";
 import FieldReportsPage from "./pages/FieldReportsPage";
 import FilesPage from "./pages/FilesPage";
@@ -31,14 +33,31 @@ import WorkersPage from "./pages/WorkersPage";
 import CompletedJobsMapPage from "./pages/CompletedJobsMapPage";
 import NotFound from "./pages/NotFound";
 import PublicNarudzbenicaPage from "./pages/PublicNarudzbenicaPage";
+import PublicProcurementOrderRedirectPage from "./pages/PublicProcurementOrderRedirectPage";
 import PendingApprovalPage from "./pages/PendingApprovalPage";
 
-import { OfflineBanner } from "@/components/shared/OfflineBanner";
+import { ThemeProvider } from "@/contexts/ThemeContext";
 import { InstallAppPrompt } from "@/components/shared/InstallAppPrompt";
+import { OfflineBanner } from "@/components/shared/OfflineBanner";
 import { MaintenanceModeGate } from "@/components/MaintenanceModeGate";
+import { SessionEntryGate } from "@/components/SessionEntryGate";
+import { useAuthStore } from "@/stores/auth-store";
+import { useGlobalSupabaseRealtimeSync } from "@/hooks/use-global-supabase-realtime-sync";
+
+function GlobalRealtimeSync() {
+  const { isAuthenticated, authReady, authProfileReady } = useAuthStore();
+  useGlobalSupabaseRealtimeSync(Boolean(authReady && authProfileReady && isAuthenticated));
+  return null;
+}
 
 const isElectronBuild = import.meta.env.VITE_ELECTRON_BUILD === "true";
 const AppRouter = isElectronBuild ? HashRouter : BrowserRouter;
+
+function LegacyMaterialOrderReceptionRedirect() {
+  const { orderId } = useParams<{ orderId: string }>();
+  if (!orderId?.trim()) return <Navigate to="/material-orders" replace />;
+  return <Navigate to={`/order-reception/${orderId.trim()}`} replace />;
+}
 
 const reactQueryWindowScope =
   typeof window !== "undefined" ? getReactQueryWindowScope() : "ssr";
@@ -91,9 +110,12 @@ const AppContent = () => {
 
   return (
     <MaintenanceModeGate>
+    <SessionEntryGate>
     <Routes>
       <Route path="/login" element={<LoginPage />} />
+      <Route path="/order-reception/:orderId" element={<OrderReception />} />
       <Route path="/narudzbenica/:token" element={<PublicNarudzbenicaPage />} />
+      <Route path="/r/order/:orderId" element={<PublicProcurementOrderRedirectPage />} />
       <Route
         path="/pending-approval"
         element={
@@ -115,8 +137,14 @@ const AppContent = () => {
         </ProtectedRoute>
       } />
 
+      <Route path="/customers" element={
+        <ProtectedRoute module={["customers", "jobs"]}>
+          <JobsListPage />
+        </ProtectedRoute>
+      } />
+
       <Route path="/jobs-map" element={
-        <ProtectedRoute module={["jobs", "customers"]}>
+        <ProtectedRoute module="jobs-map">
           <CompletedJobsMapPage />
         </ProtectedRoute>
       } />
@@ -154,6 +182,14 @@ const AppContent = () => {
       <Route path="/material-orders" element={
         <ProtectedRoute module="material-orders">
           <MaterialOrdersPage />
+        </ProtectedRoute>
+      } />
+
+      <Route path="/material-orders/:orderId/reception" element={<LegacyMaterialOrderReceptionRedirect />} />
+
+      <Route path="/material-reception" element={
+        <ProtectedRoute module="material-reception">
+          <MaterialReceptionPage />
         </ProtectedRoute>
       } />
       
@@ -219,6 +255,7 @@ const AppContent = () => {
       
       <Route path="*" element={<NotFound />} />
     </Routes>
+    </SessionEntryGate>
     </MaintenanceModeGate>
   );
 };
@@ -226,19 +263,22 @@ const AppContent = () => {
 const App = () => (
   <QueryClientProvider client={queryClient}>
     <ReactQueryVisibilitySync />
-    <TooltipProvider>
-      <I18nProvider>
-        <RoleProvider>
-          <Toaster />
-          <Sonner position="top-right" closeButton />
-          <AppRouter future={{ v7_startTransition: true, v7_relativeSplatPath: true }}>
-            <AppContent />
-            <InstallAppPrompt />
-            <OfflineBanner />
-          </AppRouter>
-        </RoleProvider>
-      </I18nProvider>
-    </TooltipProvider>
+    <GlobalRealtimeSync />
+    <ThemeProvider>
+      <TooltipProvider>
+        <I18nProvider>
+          <RoleProvider>
+            <Toaster />
+            <Sonner position="top-right" closeButton />
+            <AppRouter future={{ v7_startTransition: true, v7_relativeSplatPath: true }}>
+              <AppContent />
+              <InstallAppPrompt />
+              <OfflineBanner />
+            </AppRouter>
+          </RoleProvider>
+        </I18nProvider>
+      </TooltipProvider>
+    </ThemeProvider>
   </QueryClientProvider>
 );
 

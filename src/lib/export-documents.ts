@@ -12,16 +12,149 @@ import {
   type MaterialOrderPdfUpsertResult,
 } from "@/lib/material-order-pdf-upload";
 import { upsertJobScopedGeneratedPdf } from "@/lib/job-generated-pdf-upload";
-import { buildNarudzbenicaDocumentHtml } from "@/lib/narudzbenica-html";
+import {
+  generateProcurementOrderPdfBlob,
+  generateProcurementOrderPdfBlobFromSmartItems,
+  buildMaterialOrderShareOrCrmUrl,
+} from "@/lib/material-order-procurement-pdf";
+import { parseMaterialOrderItemsJson, validateSmartItemsJson, type MaterialOrderItemsJsonV1 } from "@/lib/material-order-items-json";
+import { buildOrderReceptionAbsoluteUrl } from "@/lib/order-reception-url";
+import type { MaterialOrderLineFormValues } from "@/lib/material-order-form-schema";
+import { materialOrderFormLinesToMaterialOrderLines } from "@/lib/material-order-form-lines-mapper";
+import { normalizeOrderLines } from "@/lib/material-order-lines";
+import {
+  materialOrderLineToImportedItemForBarcode,
+  procurementBarcodeValueForOrderLine,
+  procurementPdfRowsFromOrderLines,
+} from "@/lib/material-order-procurement-rows";
 import { pdfMemorandumHeaderHtml } from "@/lib/pdf-memorandum";
 import { PDF_DOCUMENT_STYLES } from "@/lib/pdf-document-theme";
-import { upsertQuoteGeneratedPdf } from "@/lib/quote-generated-pdf-upload";
+import { openPdfBlobInNewTabOrDownload } from "@/lib/pdf-from-html";
 import { mapMaterialOrderRow } from "@/lib/map-material-order";
-import type { FieldReport, FieldReportDetails, Job, MaterialOrder, Quote, WorkOrder } from "@/types";
+import type { ImportedOrderItem } from "@/lib/procurement-excel-import";
+import type { FieldReport, FieldReportDetails, Job, MaterialOrder, MaterialOrderLine, WorkOrder } from "@/types";
+import { fieldReportEverythingOkFromDbRow, displayFieldReportMissingItem } from "@/lib/field-report-mappers";
 import { jobPrimaryPhone } from "@/lib/job-contact-phone";
 import { labelWorkOrderType } from "@/lib/activity-labels";
 
 const today = () => formatDateBySettings(new Date());
+
+/** Ručne stavke za smart PDF (isti dodatak kao u pregledu u formi). */
+function manualAppendixImportedFromNormalizedLines(lines: MaterialOrderLine[]): ImportedOrderItem[] {
+  const out: ImportedOrderItem[] = [];
+  for (const line of lines) {
+    if (line.procurementMeta?.manual_line === false) continue;
+    const item = materialOrderLineToImportedItemForBarcode(line);
+    if (item) out.push(item);
+  }
+  return out;
+}
+
+/** Stabilan ključ za sistemski barkod ručnih stavki u PDF-u pre snimanja narudžbine (isti dok se ne promene redovi). */
+function fingerprintProcurementDraftNbLines(nb: MaterialOrderLineFormValues[]): string {
+  const s = JSON.stringify(
+    nb.map((l) => [String(l.description ?? "").trim(), l.quantity, String(l.unit ?? "").trim()]),
+  );
+  let h = 5381;
+  for (let i = 0; i < s.length; i += 1) {
+    h = Math.imul(h, 33) + s.charCodeAt(i);
+  }
+  return String((h >>> 0) % 1_000_000_000).padStart(9, "0");
+}
+
+function buildProcurementDraftScopeKey(jobId: string | undefined, nb: MaterialOrderLineFormValues[]): string {
+  return `pregled:${jobId?.trim() || "bez-posla"}:${fingerprintProcurementDraftNbLines(nb)}`;
+}
+
+function fingerprintSmartItemsJson(ij: MaterialOrderItemsJsonV1): string {
+  const s = JSON.stringify([ij.columns, ij.rows, ij.articleColumnKey, ij.quantityColumnKey]);
+  let h = 5381;
+  for (let i = 0; i < s.length; i += 1) {
+    h = Math.imul(h, 33) + s.charCodeAt(i);
+  }
+  return String((h >>> 0) % 1_000_000_000).padStart(9, "0");
+}
+
+function fingerprintImportedAppendixForDraft(items: ImportedOrderItem[]): string {
+  const s = JSON.stringify(
+    items.map((r) => [
+      r.article,
+      r.quantity,
+      r.work_order ?? "",
+      r.position ?? "",
+      r.article_code ?? "",
+      r.color ?? "",
+      r.uom ?? "",
+      r.length_mm ?? "",
+    ]),
+  );
+  let h = 5381;
+  for (let i = 0; i < s.length; i += 1) {
+    h = Math.imul(h, 33) + s.charCodeAt(i);
+  }
+  return String((h >>> 0) % 1_000_000_000).padStart(9, "0");
+}
+
+function buildSmartDraftScopeKey(
+  jobId: string | undefined,
+  ij: MaterialOrderItemsJsonV1,
+  appendix?: ImportedOrderItem[] | null,
+): string {
+  const core = fingerprintSmartItemsJson(ij);
+  const suf = appendix?.length ? `:ap:${fingerprintImportedAppendixForDraft(appendix)}` : "";
+  return `pregled-smart:${jobId?.trim() || "bez-posla"}:${core}${suf}`;
+}
+
+/** Blob za pregled u modalu / štampu — smart tabela ili klasične stavke. */
+export async function buildDraftMaterialOrderProcurementPdfBlob(params: {
+  itemsJson?: MaterialOrderItemsJsonV1 | null;
+  nbLines: MaterialOrderLineFormValues[];
+  jobId?: string;
+  jobNumberLabel: string;
+  notes?: string;
+}): Promise<Blob | null> {
+  const crmUrl = buildMaterialOrderShareOrCrmUrl({
+    publicShareToken: null,
+    jobId: params.jobId ?? null,
+    materialOrderId: null,
+  });
+  const ij = params.itemsJson ?? null;
+  if (ij && validateSmartItemsJson(ij) === null) {
+    const appendixFormLines = params.nbLines.filter((l) => l.procurementMeta?.manual_line !== false);
+    const appendixImported: ImportedOrderItem[] = [];
+    if (appendixFormLines.length > 0) {
+      const mappedLines = materialOrderFormLinesToMaterialOrderLines(appendixFormLines, { zeroLineNet: true });
+      for (const line of mappedLines) {
+        const item = materialOrderLineToImportedItemForBarcode(line);
+        if (item) appendixImported.push(item);
+      }
+    }
+    return generateProcurementOrderPdfBlobFromSmartItems({
+      itemsJson: ij,
+      nalogLabel: params.jobNumberLabel.trim() || "—",
+      crmUrl,
+      footerNote: params.notes?.trim() ?? "",
+      manualAppendixImportedRows: appendixImported.length > 0 ? appendixImported : undefined,
+      barcodeScope: {
+        draftScopeKey: buildSmartDraftScopeKey(
+          params.jobId,
+          ij,
+          appendixImported.length > 0 ? appendixImported : undefined,
+        ),
+      },
+    });
+  }
+  const lines = materialOrderFormLinesToMaterialOrderLines(params.nbLines, { zeroLineNet: true });
+  const rows = procurementPdfRowsFromOrderLines(lines);
+  if (!rows) return null;
+  return generateProcurementOrderPdfBlob({
+    rows,
+    nalogLabel: params.jobNumberLabel.trim() || "—",
+    crmUrl,
+    footerNote: params.notes?.trim() ?? "",
+    barcodeScope: { draftScopeKey: buildProcurementDraftScopeKey(params.jobId, params.nbLines) },
+  });
+}
 
 function escapeHtml(s: string): string {
   return s
@@ -44,7 +177,7 @@ async function fetchMaterialOrderForExport(orderId: string): Promise<MaterialOrd
     .from("material_orders")
     .select(`
       *,
-      suppliers (id, name, contact_person, address, phone, email, bank_account, pib, nb_shipping_method),
+      suppliers (id, name, contact_person, address, phone, email, bank_account, pib),
       jobs (id, job_number)
     `)
     .eq("id", orderId)
@@ -106,7 +239,11 @@ async function fetchFieldReportForExport(reportId: string): Promise<FieldReport 
     siteCanceled: !!data.site_canceled,
     cancelReason: data.cancel_reason ?? undefined,
     jobCompleted: !!data.completed,
-    everythingOk: data.everything_ok ?? !data.issues,
+    everythingOk: fieldReportEverythingOkFromDbRow({
+      everything_ok: data.everything_ok,
+      issues: data.issues,
+      missing_items: data.missing_items,
+    }),
     issueDescription: data.issues ?? undefined,
     details: detailsParsed,
     estimatedInstallationHours: Number.isFinite(estNum as number) ? (estNum as number) : undefined,
@@ -144,6 +281,8 @@ async function fetchWorkOrderForExport(orderId: string): Promise<WorkOrder | nul
     jobId: data.job_id,
     type: data.type,
     description: data.description,
+    measurementLocation: data.measurement_location ?? undefined,
+    measurementScope: data.measurement_scope ?? undefined,
     assignedTeamId: data.team_id ?? undefined,
     date: data.date,
     status: data.status,
@@ -163,6 +302,7 @@ function openPrintWindow(html: string) {
 }
 
 const docStyles = PDF_DOCUMENT_STYLES;
+const pdfCompanyName = () => readAppSettingsCache().companyName.trim() || "Termo Plast D.O.O";
 
 export type GeneratedPdfSaveOptions = {
   attachGeneratedPdf?: boolean;
@@ -218,7 +358,7 @@ export async function exportFieldReportPDF(report: FieldReport, options?: Genera
   <div class="doc-sheet">
   <div class="doc-header">
     <div class="doc-brand">
-      <div class="doc-brand-line">Stolarija Kovačević · Interni dokument</div>
+      <div class="doc-brand-line">${escapeHtml(pdfCompanyName())} · Interni dokument</div>
       <h1 class="doc-title">Terenski izveštaj</h1>
       <p class="doc-lead">${escapeHtml(reportData.address)}</p>
       ${jobSubtitle ? `<p class="doc-lead" style="margin-top:6px">${jobSubtitle}</p>` : ""}
@@ -280,7 +420,7 @@ export async function exportFieldReportPDF(report: FieldReport, options?: Genera
   ${reportData.missingItems.length > 0 ? `
   <div class="section">
     <div class="section-title">Nedostajući delovi</div>
-    <div>${reportData.missingItems.map((i) => `<span class="tag">${escapeHtml(i)}</span>`).join("")}</div>
+    <div>${reportData.missingItems.map((i) => `<span class="tag">${escapeHtml(displayFieldReportMissingItem(i))}</span>`).join("")}</div>
   </div>` : ""}
 
   ${reportData.additionalNeeds.length > 0 ? `
@@ -308,7 +448,7 @@ export async function exportFieldReportPDF(report: FieldReport, options?: Genera
       .join("")}</div>
   </div>` : ""}
 
-  <div class="footer">Stolarija Kovačević d.o.o. · Terenski izveštaj · ${today()}</div>
+  <div class="footer">${escapeHtml(pdfCompanyName())} · Terenski izveštaj · ${today()}</div>
   </div>
 </div>
 </body></html>`;
@@ -364,7 +504,7 @@ export async function exportWorkOrderPDF(order: WorkOrder, options?: GeneratedPd
   <div class="doc-sheet">
   <div class="doc-header">
     <div class="doc-brand">
-      <div class="doc-brand-line">Stolarija Kovačević · Interni dokument</div>
+      <div class="doc-brand-line">${escapeHtml(pdfCompanyName())} · Interni dokument</div>
       <h1 class="doc-title">Radni nalog</h1>
       <p class="doc-lead">${escapeHtml(typeLabel)}</p>
       ${job ? `<p class="doc-lead">${escapeHtml(job.jobNumber)} · ${escapeHtml(job.customer.fullName)}</p>` : ""}
@@ -388,6 +528,12 @@ export async function exportWorkOrderPDF(order: WorkOrder, options?: GeneratedPd
       <div><div class="field-label">Datum</div><div class="field-value">${escapeHtml(orderData.date || "—")}</div></div>
       ${orderData.installationRef ? `<div><div class="field-label">Ref. ugradnje</div><div class="field-value">${escapeHtml(orderData.installationRef)}</div></div>` : ""}
       ${orderData.productionRef ? `<div><div class="field-label">Ref. proizvodnje</div><div class="field-value">${escapeHtml(orderData.productionRef)}</div></div>` : ""}
+      ${
+        orderData.type === "measurement" || orderData.type === "measurement_verification"
+          ? `<div><div class="field-label">Gde se meri</div><div class="field-value">${escapeHtml(orderData.measurementLocation || "—")}</div></div>
+      <div><div class="field-label">Šta se meri</div><div class="field-value">${escapeHtml(orderData.measurementScope || "—")}</div></div>`
+          : ""
+      }
     </div></div>
   </div>
 
@@ -416,7 +562,7 @@ export async function exportWorkOrderPDF(order: WorkOrder, options?: GeneratedPd
     </div>
   </div>
 
-  <div class="footer">Stolarija Kovačević d.o.o. · Radni nalog · ${today()}</div>
+  <div class="footer">${escapeHtml(pdfCompanyName())} · Radni nalog · ${today()}</div>
   </div>
 </div>
 </body></html>`;
@@ -456,25 +602,126 @@ export type MaterialOrderExportOptions = {
   userId?: string;
   onPdfAttached?: (result: MaterialOrderPdfUpsertResult) => void;
   onPdfAttachFailed?: (message: string) => void;
+  /** Rezervisan tab/prozor otvoren tokom user klika (mobilni/PWA popup-safe). */
+  targetWindow?: Window | null;
+  /** Podrazumevano true; false = samo prilog (npr. posle kreiranja narudžbine). */
+  openInBrowser?: boolean;
 };
+
+/**
+ * PDF porudžbine iz trenutnih stavki u formi (pre čuvanja u CRM) — isti izgled kao posle snimanja.
+ */
+export async function exportDraftProcurementOrderPdfFromFormLines(params: {
+  nbLines: MaterialOrderLineFormValues[];
+  jobId?: string;
+  jobNumberLabel: string;
+  notes?: string;
+  itemsJson?: MaterialOrderItemsJsonV1 | null;
+  /** Rezervisan tab/prozor otvoren tokom user klika (mobilni/PWA popup-safe). */
+  targetWindow?: Window | null;
+}): Promise<void> {
+  const blob = await buildDraftMaterialOrderProcurementPdfBlob({
+    itemsJson: params.itemsJson,
+    nbLines: params.nbLines,
+    jobId: params.jobId,
+    jobNumberLabel: params.jobNumberLabel,
+    notes: params.notes,
+  });
+  if (!blob) {
+    throw new Error(
+      "Nema ispravnih stavki za PDF (svaka treba bar naziv / opis ili uvezene nabavke kolone). Dodajte ili uvezite stavke.",
+    );
+  }
+  const safeJob = params.jobNumberLabel.trim().replace(/[^\w\u0400-\u04FF-]/g, "_") || "pregled";
+  openPdfBlobInNewTabOrDownload(blob, `Porudzbenica_${safeJob}_pregled.pdf`, params.targetWindow);
+}
 
 export async function exportMaterialOrderPDF(order: MaterialOrder, options?: MaterialOrderExportOptions) {
   const orderFromDb = await fetchMaterialOrderForExport(order.id);
   const orderData = orderFromDb ?? order;
   const job = orderData.jobId ? await fetchJobByIdForExport(orderData.jobId) : null;
 
-  const html = await buildNarudzbenicaDocumentHtml(orderData);
-  openPrintWindow(html);
+  const nalogLabel = (job?.jobNumber || orderData.job?.jobNumber || "").trim() || "—";
+  const crmUrl = buildMaterialOrderShareOrCrmUrl({
+    publicShareToken: orderData.publicShareToken,
+    jobId: orderData.jobId,
+    materialOrderId: orderData.id,
+  });
+
+  const isShortage = orderData.isShortageOrder === true;
+  const pdfTitle = isShortage ? "PORUDZBINA PO NEDOSTATKU" : undefined;
+  /** Za Porudžbinu po nedostatku ne štampamo nikakav footer — naslov dokumenta već
+   *  identifikuje tip, a auto-generisane sistemske napomene (Express tok, referenca...)
+   *  ne treba da budu na PDF-u koji se šalje dobavljaču. */
+  const userNote = orderData.notes?.trim() ?? "";
+  const footerNote = isShortage ? "" : userNote;
+
+  const lines = normalizeOrderLines(orderData);
+  const rowsFromLines = procurementPdfRowsFromOrderLines(lines);
+  const ij = parseMaterialOrderItemsJson(orderData.itemsJson);
+  const rowsFromSmart = ij && validateSmartItemsJson(ij) === null ? ij : null;
+
+  /**
+   * Za „Porudžbinu po nedostatku" magacin treba da skenira ISTE barkodove sa originalne porudžbenice
+   * (svaka linija ima `shortageSource` koji upućuje na parent + parent_line_index). Ovde se ti
+   * barkodovi unapred izračunaju da PDF ne generiše nove na osnovu svog (shortage) ID-a.
+   */
+  const perRowBarcodes = isShortage
+    ? lines.map((l, idx) =>
+        procurementBarcodeValueForOrderLine(l, { materialOrderId: orderData.id, lineIndex: idx }),
+      )
+    : undefined;
+
+  let blob: Blob;
+  /** Sa validnim `items_json` štampa se ista smart tabela kao u pregledu (ne klasični PDF iz `nb_lines`). */
+  if (rowsFromSmart != null && !isShortage) {
+    const appendixImported = manualAppendixImportedFromNormalizedLines(lines);
+    blob = await generateProcurementOrderPdfBlobFromSmartItems({
+      itemsJson: rowsFromSmart,
+      nalogLabel,
+      crmUrl,
+      footerNote,
+      manualAppendixImportedRows: appendixImported.length > 0 ? appendixImported : undefined,
+      barcodeScope: { materialOrderId: orderData.id },
+    });
+  } else if (rowsFromLines && rowsFromLines.length > 0) {
+    blob = await generateProcurementOrderPdfBlob({
+      rows: rowsFromLines,
+      nalogLabel,
+      crmUrl,
+      footerNote,
+      barcodeScope: { materialOrderId: orderData.id },
+      pdfTitle,
+      perRowBarcodes,
+    });
+  } else if (rowsFromSmart) {
+    const appendixImported = manualAppendixImportedFromNormalizedLines(lines);
+    blob = await generateProcurementOrderPdfBlobFromSmartItems({
+      itemsJson: rowsFromSmart,
+      nalogLabel,
+      crmUrl,
+      footerNote,
+      manualAppendixImportedRows: appendixImported.length > 0 ? appendixImported : undefined,
+      barcodeScope: { materialOrderId: orderData.id },
+      pdfTitle,
+    });
+  } else {
+    throw new Error(
+      "PDF porudžbine nije dostupan: stavke nemaju nazive / podatke za nabavku. Dopunite stavke ili uvezite Excel, sačuvajte pa ponovo štampajte.",
+    );
+  }
+
+  const displayFilename = buildMaterialOrderPdfDisplayName(
+    orderData.id,
+    job?.jobNumber ?? orderData.job?.jobNumber ?? null,
+  );
+  if (options?.openInBrowser !== false) {
+    openPdfBlobInNewTabOrDownload(blob, displayFilename, options?.targetWindow);
+  }
 
   if (options?.attachGeneratedPdf && options.userId) {
     void (async () => {
       try {
-        const { htmlDocumentToPdfBlob } = await import("@/lib/pdf-from-html");
-        const blob = await htmlDocumentToPdfBlob(html);
-        const displayFilename = buildMaterialOrderPdfDisplayName(
-          orderData.id,
-          job?.jobNumber ?? orderData.job?.jobNumber ?? null,
-        );
         const result = await upsertMaterialOrderGeneratedPdf({
           materialOrderId: orderData.id,
           jobId: orderData.jobId,
@@ -489,179 +736,4 @@ export async function exportMaterialOrderPDF(order: MaterialOrder, options?: Mat
       }
     })();
   }
-}
-
-function quoteIssuerCardHtml(): string {
-  const s = readAppSettingsCache();
-  const name = s.companyName.trim() || "Stolarija Kovačević d.o.o.";
-  const rows: string[] = [];
-  if (s.companyAddress.trim()) rows.push(`<p>${escapeHtml(s.companyAddress.trim())}</p>`);
-  if (s.companyPib.trim()) rows.push(`<p><strong>PIB</strong> ${escapeHtml(s.companyPib.trim())}</p>`);
-  if (s.companyMb.trim()) rows.push(`<p><strong>MB</strong> ${escapeHtml(s.companyMb.trim())}</p>`);
-  if (s.companyPhone.trim()) rows.push(`<p><strong>Tel.</strong> ${escapeHtml(s.companyPhone.trim())}</p>`);
-  if (s.companyEmail.trim()) rows.push(`<p><strong>E-mail</strong> ${escapeHtml(s.companyEmail.trim())}</p>`);
-  if (s.companyWebsite.trim()) rows.push(`<p><strong>Web</strong> ${escapeHtml(s.companyWebsite.trim())}</p>`);
-  if (s.companyBankAccount.trim()) rows.push(`<p><strong>Žiro račun</strong> ${escapeHtml(s.companyBankAccount.trim())}</p>`);
-  const hint =
-    rows.length === 0
-      ? `<p class="doc-party-hint">Podatke firme (naziv, PIB, adresa, žiro…) unesite u Podešavanjima.</p>`
-      : "";
-  return `<div class="card"><div class="doc-party-label">Izdavalac ponude</div><div class="doc-party-body"><p><strong>${escapeHtml(name)}</strong></p>${rows.join("")}${hint}</div></div>`;
-}
-
-function quoteCustomerCardHtml(job: Job | null): string {
-  if (!job?.customer) {
-    return `<div class="card"><div class="doc-party-label">Kupac</div><div class="doc-party-body"><p class="doc-party-hint">—</p></div></div>`;
-  }
-  const c = job.customer;
-  const rows: string[] = [`<p><strong>${escapeHtml(c.fullName)}</strong></p>`];
-  if (c.contactPerson.trim()) rows.push(`<p>${escapeHtml(c.contactPerson.trim())}</p>`);
-  if (c.billingAddress.trim()) {
-    rows.push(`<p><strong>Adresa (naplata)</strong><br/>${escapeHtml(c.billingAddress.trim())}</p>`);
-  }
-  if (c.installationAddress.trim()) {
-    rows.push(`<p><strong>Adresa ugradnje</strong><br/>${escapeHtml(c.installationAddress.trim())}</p>`);
-  }
-  const phone = c.phones?.[0]?.trim();
-  if (phone) rows.push(`<p><strong>Tel.</strong> ${escapeHtml(phone)}</p>`);
-  const em = c.emails?.[0]?.trim();
-  if (em) rows.push(`<p><strong>E-mail</strong> ${escapeHtml(em)}</p>`);
-  if (c.pib.trim()) rows.push(`<p><strong>PIB</strong> ${escapeHtml(c.pib.trim())}</p>`);
-  if (c.registrationNumber.trim()) rows.push(`<p><strong>Matični broj</strong> ${escapeHtml(c.registrationNumber.trim())}</p>`);
-  return `<div class="card"><div class="doc-party-label">Kupac</div><div class="doc-party-body">${rows.join("")}</div></div>`;
-}
-
-function quoteHtml(quote: Quote, job: Job | null) {
-  const settings = readAppSettingsCache();
-  const currency = settings.currency;
-  const companyShort = settings.companyName.trim() || "Stolarija Kovačević d.o.o.";
-  const jobNumber = job?.jobNumber ?? "—";
-  const customerName = job?.customer?.fullName ?? "Kupac";
-
-  const linesRows =
-    quote.lines.length > 0
-      ? quote.lines
-          .map((line) => {
-            const amount = (Number(line.quantity) || 0) * (Number(line.unitPrice) || 0);
-            return `<tr>
-  <td>${escapeHtml(line.description)}</td>
-  <td class="num">${escapeHtml(String(line.quantity))}</td>
-  <td class="num">${escapeHtml(formatCurrencyBySettings(Number(line.unitPrice) || 0))}</td>
-  <td class="num">${escapeHtml(formatCurrencyBySettings(amount))}</td>
-</tr>`;
-          })
-          .join("")
-      : `<tr class="doc-empty-row"><td colspan="4">Nema stavki u ponudi</td></tr>`;
-
-  const totalFormatted = escapeHtml(formatCurrencyBySettings(quote.totalAmount));
-
-  return `<!DOCTYPE html><html><head><meta charset="utf-8"><title>Ponuda</title>
-<style>${docStyles}</style></head><body>
-<div class="doc-wrap">
-  ${pdfMemorandumHeaderHtml()}
-  <div class="doc-accent"></div>
-  <div class="doc-sheet">
-  <div class="doc-parties-grid">
-    ${quoteIssuerCardHtml()}
-    ${quoteCustomerCardHtml(job)}
-  </div>
-  <div class="doc-header">
-    <div class="doc-brand">
-      <div class="doc-brand-line">${escapeHtml(companyShort)} · Ponuda</div>
-      <h1 class="doc-title">Ponuda ${escapeHtml(quote.quoteNumber)}</h1>
-      <p class="doc-lead">Verzija ${quote.versionNumber} · Posao <strong>${escapeHtml(jobNumber)}</strong> · ${escapeHtml(customerName)}</p>
-    </div>
-    <div class="doc-meta-right">
-      <div><strong>Štampano</strong><br/>${today()}</div>
-    </div>
-  </div>
-  <div class="section">
-    <div class="section-title">Stavke</div>
-    <div class="doc-table-wrap">
-    <table class="doc-data-table" aria-label="Stavke ponude">
-      <thead>
-        <tr>
-          <th>Opis</th>
-          <th class="num" style="width:52px">Kol.</th>
-          <th class="num" style="width:96px">Jed. cena (${currency})</th>
-          <th class="num" style="width:96px">Iznos (${currency})</th>
-        </tr>
-      </thead>
-      <tbody>${linesRows}</tbody>
-    </table>
-    </div>
-    <div class="doc-total-panel">
-      <div class="doc-total-box">
-        <div class="doc-total-label">Ukupno (sa PDV)</div>
-        <div><span class="doc-total-value">${totalFormatted}</span></div>
-      </div>
-    </div>
-  </div>
-  ${quote.note ? `<div class="section"><div class="section-title">Napomena</div><div class="note-box">${escapeHtml(quote.note)}</div></div>` : ""}
-  <div class="footer">${escapeHtml(companyShort)} · Ponuda · ${today()}</div>
-  </div>
-</div>
-</body></html>`;
-}
-
-export async function exportQuotePDF(quote: Quote, jobId: string, options?: GeneratedPdfSaveOptions) {
-  const job = await fetchJobByIdForExport(jobId);
-  const html = quoteHtml(quote, job);
-  openPrintWindow(html);
-
-  if (options?.attachGeneratedPdf && options.userId) {
-    void (async () => {
-      try {
-        const { htmlDocumentToPdfBlob } = await import("@/lib/pdf-from-html");
-        const blob = await htmlDocumentToPdfBlob(html);
-        const result = await upsertQuoteGeneratedPdf({
-          quote,
-          jobId,
-          blob,
-          uploadedBy: options.userId!,
-        });
-        options.onPdfAttached?.(result);
-      } catch (e) {
-        const msg = e instanceof Error ? e.message : "Greška pri snimanju PDF ponude";
-        options.onPdfAttachFailed?.(msg);
-      }
-    })();
-  }
-}
-
-export async function prepareQuoteEmailDraft(quote: Quote, jobId: string, options?: GeneratedPdfSaveOptions) {
-  const job = await fetchJobByIdForExport(jobId);
-  const html = quoteHtml(quote, job);
-
-  const { htmlDocumentToPdfBlob } = await import("@/lib/pdf-from-html");
-  const blob = await htmlDocumentToPdfBlob(html);
-  const fileName = `ponuda_${quote.quoteNumber.replace(/[^\w-]/g, "_")}.pdf`;
-  const objectUrl = URL.createObjectURL(blob);
-  const a = document.createElement("a");
-  a.href = objectUrl;
-  a.download = fileName;
-  a.click();
-  URL.revokeObjectURL(objectUrl);
-
-  if (options?.attachGeneratedPdf && options.userId) {
-    try {
-      const result = await upsertQuoteGeneratedPdf({
-        quote,
-        jobId,
-        blob,
-        uploadedBy: options.userId,
-      });
-      options.onPdfAttached?.(result);
-    } catch (e) {
-      const msg = e instanceof Error ? e.message : "Greška pri snimanju PDF ponude";
-      options.onPdfAttachFailed?.(msg);
-    }
-  }
-
-  const targetEmail = job?.customer?.emails?.[0] ?? "";
-  const subject = encodeURIComponent(`Ponuda ${quote.quoteNumber}`);
-  const body = encodeURIComponent(
-    `Poštovani,\n\nu prilogu je ponuda ${quote.quoteNumber}.\n\nPozdrav.`,
-  );
-  window.open(`mailto:${targetEmail}?subject=${subject}&body=${body}`, "_self");
 }

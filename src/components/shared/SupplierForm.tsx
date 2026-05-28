@@ -11,39 +11,43 @@ import {
   FormMessage,
 } from "@/components/ui/form";
 import { Input } from "@/components/ui/input";
-import { Textarea } from "@/components/ui/textarea";
 import { Checkbox } from "@/components/ui/checkbox";
 import type { Supplier } from "@/types";
+
+const supplierCategories = [
+  "Profili",
+  "Staklo",
+  "Okov",
+  "Roletne/Kupovno",
+  "Ostalo",
+] as const;
 
 const supplierSchema = z.object({
   name: z.string().min(2, "Naziv mora imati barem 2 karaktera"),
   contactPerson: z.string().min(2, "Kontakt osoba mora imati barem 2 karaktera"),
   phone: z.string().min(5, "Telefon je obavezan"),
-  email: z.string().email("Neispravan email").or(z.literal("")),
+  email: z.string().trim().min(1, "Email je obavezan").email("Neispravan email"),
   address: z.string().min(5, "Adresa je obavezna"),
   active: z.boolean().default(true),
+  category: z.string().min(1, "Kategorija je obavezna").default("Ostalo"),
   bankAccount: z.string().optional().default(""),
   pib: z.string().optional().default(""),
-  nbShippingMethod: z.string().optional().default(""),
-  nbPaymentDaysAfterOrder: z.preprocess(
-    (v) => (v === "" || v === undefined || v === null ? undefined : Number(String(v).replace(",", "."))),
-    z.number().int().min(1).max(3650).optional(),
-  ),
-  nbLegalReference: z.string().optional().default(""),
-  nbPaymentNote: z.string().optional().default(""),
-  nbDeliveryAddressOverride: z.string().optional().default(""),
 });
 
 export type SupplierFormValues = z.infer<typeof supplierSchema>;
 
 interface SupplierFormProps {
   initialData?: Partial<Supplier>;
+  categorySuggestions?: string[];
   onSubmit: (data: SupplierFormValues) => void;
   onCancel: () => void;
   isLoading?: boolean;
 }
 
-export function SupplierForm({ initialData, onSubmit, onCancel, isLoading }: SupplierFormProps) {
+export function SupplierForm({ initialData, categorySuggestions, onSubmit, onCancel, isLoading }: SupplierFormProps) {
+  const categoryOptions = Array.from(
+    new Set([...supplierCategories, ...(categorySuggestions ?? []).map((v) => v.trim()).filter(Boolean)]),
+  );
   const form = useForm<z.infer<typeof supplierSchema>>({
     resolver: zodResolver(supplierSchema),
     defaultValues: {
@@ -53,13 +57,9 @@ export function SupplierForm({ initialData, onSubmit, onCancel, isLoading }: Sup
       email: initialData?.email || "",
       address: initialData?.address || "",
       active: initialData?.active ?? true,
+      category: initialData?.category || "Ostalo",
       bankAccount: initialData?.bankAccount ?? "",
       pib: initialData?.pib ?? "",
-      nbShippingMethod: initialData?.nbShippingMethod ?? "",
-      nbPaymentDaysAfterOrder: initialData?.nbPaymentDaysAfterOrder,
-      nbLegalReference: initialData?.nbLegalReference ?? "",
-      nbPaymentNote: initialData?.nbPaymentNote ?? "",
-      nbDeliveryAddressOverride: initialData?.nbDeliveryAddressOverride ?? "",
     },
   });
 
@@ -111,7 +111,7 @@ export function SupplierForm({ initialData, onSubmit, onCancel, isLoading }: Sup
             name="email"
             render={({ field }) => (
               <FormItem>
-                <FormLabel>Email (opciono)</FormLabel>
+                <FormLabel>Email</FormLabel>
                 <FormControl>
                   <Input placeholder="email@primer.rs" {...field} />
                 </FormControl>
@@ -138,9 +138,9 @@ export function SupplierForm({ initialData, onSubmit, onCancel, isLoading }: Sup
 
         <div className="md:col-span-2 space-y-3 rounded-lg border border-border bg-muted/30 p-4">
           <div>
-            <h3 className="text-sm font-semibold text-foreground">Porudžbenica — podrazumevano</h3>
+            <h3 className="text-sm font-semibold text-foreground">Finansijski podaci i kategorija</h3>
           </div>
-          <div className="grid grid-cols-1 gap-4 md:grid-cols-2 md:items-end">
+          <div className="grid grid-cols-1 gap-4 md:grid-cols-2 md:items-start">
             <FormField
               control={form.control}
               name="bankAccount"
@@ -158,7 +158,7 @@ export function SupplierForm({ initialData, onSubmit, onCancel, isLoading }: Sup
               control={form.control}
               name="pib"
               render={({ field }) => (
-                <FormItem className="md:col-span-2">
+                <FormItem>
                   <FormLabel>PIB dobavljača</FormLabel>
                   <FormControl>
                     <Input placeholder="Opciono" {...field} value={field.value ?? ""} />
@@ -169,76 +169,42 @@ export function SupplierForm({ initialData, onSubmit, onCancel, isLoading }: Sup
             />
             <FormField
               control={form.control}
-              name="nbShippingMethod"
-              render={({ field }) => (
-                <FormItem className="md:col-span-2">
-                  <FormLabel>Način otpreme / isporuke</FormLabel>
-                  <FormControl>
-                    <Input placeholder="npr. sopstveni prevoz, kurir…" {...field} value={field.value ?? ""} />
-                  </FormControl>
-                  <FormMessage />
-                </FormItem>
-              )}
-            />
-            <FormField
-              control={form.control}
-              name="nbPaymentDaysAfterOrder"
+              name="category"
               render={({ field }) => (
                 <FormItem>
-                  <FormLabel>Rok plaćanja (dana od datuma narudžbine)</FormLabel>
+                  <FormLabel>Kategorija dobavljača (može nova)</FormLabel>
                   <FormControl>
                     <Input
-                      type="number"
-                      min={1}
-                      max={3650}
-                      placeholder="npr. 30 — prazno bez automatskog datuma"
+                      list="supplier-category-suggestions"
+                      placeholder="npr. Aluminijum, Servis, Ostalo..."
                       {...field}
-                      value={field.value === undefined || field.value === null ? "" : field.value}
-                      onChange={(e) => {
-                        const v = e.target.value;
-                        field.onChange(v === "" ? undefined : Number(v.replace(",", ".")));
-                      }}
+                      value={field.value ?? ""}
                     />
                   </FormControl>
-                  <FormMessage />
-                </FormItem>
-              )}
-            />
-            <FormField
-              control={form.control}
-              name="nbLegalReference"
-              render={({ field }) => (
-                <FormItem>
-                  <FormLabel>Pravni osnov</FormLabel>
-                  <FormControl>
-                    <Input placeholder="npr. Ugovor br. …" {...field} value={field.value ?? ""} />
-                  </FormControl>
-                  <FormMessage />
-                </FormItem>
-              )}
-            />
-            <FormField
-              control={form.control}
-              name="nbPaymentNote"
-              render={({ field }) => (
-                <FormItem className="md:col-span-2">
-                  <FormLabel>Napomena o plaćanju</FormLabel>
-                  <FormControl>
-                    <Textarea placeholder="Dodatni uslovi plaćanja" rows={2} {...field} value={field.value ?? ""} />
-                  </FormControl>
-                  <FormMessage />
-                </FormItem>
-              )}
-            />
-            <FormField
-              control={form.control}
-              name="nbDeliveryAddressOverride"
-              render={({ field }) => (
-                <FormItem className="md:col-span-2">
-                  <FormLabel>Adresa isporuke (ako nije adresa naručioca iz Podešavanja)</FormLabel>
-                  <FormControl>
-                    <Textarea rows={2} {...field} value={field.value ?? ""} />
-                  </FormControl>
+                  <datalist id="supplier-category-suggestions">
+                    {categoryOptions.map((cat) => (
+                      <option key={cat} value={cat} />
+                    ))}
+                  </datalist>
+                  {categoryOptions.length > 0 ? (
+                    <div className="flex flex-wrap gap-1.5 pt-1">
+                      {categoryOptions.map((cat) => {
+                        const active = (field.value ?? "").trim() === cat;
+                        return (
+                          <Button
+                            key={cat}
+                            type="button"
+                            size="sm"
+                            variant={active ? "secondary" : "outline"}
+                            className="h-7 px-2 text-xs"
+                            onClick={() => field.onChange(cat)}
+                          >
+                            {cat}
+                          </Button>
+                        );
+                      })}
+                    </div>
+                  ) : null}
                   <FormMessage />
                 </FormItem>
               )}

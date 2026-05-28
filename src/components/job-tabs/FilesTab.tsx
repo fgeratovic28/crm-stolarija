@@ -10,19 +10,38 @@ import { useRole } from "@/contexts/RoleContext";
 import { useFiles } from "@/hooks/use-files";
 import { formatDateByAppLanguage } from "@/lib/app-settings";
 import { publicUrlForStorageKey } from "@/lib/r2-storage";
+import { JobCustomerLink } from "@/components/shared/JobCustomerLink";
+import type { JobDetailsReturnState } from "@/lib/job-details-return";
 import { toast } from "sonner";
 import type { AppFile } from "@/types";
+
+type FilesJobMeta = { jobNumber: string; customerName: string };
 
 const categoryLabels: Record<string, string> = {
   offers: "Ponude", communication: "Komunikacija", finance: "Finansije",
   supplier: "Dobavljač", work_order: "Radni nalozi", field_photos: "Terenske foto.", reports: "Izveštaji",
 };
 
-export function FilesTab({ files }: { files: AppFile[] }) {
+export function FilesTab({
+  files,
+  totalCount,
+  jobMeta,
+  jobListReturn,
+  emptyDescription,
+}: {
+  files: AppFile[];
+  /** Ukupan broj posle filtera (globalna strana); podrazumevano `files.length`. */
+  totalCount?: number;
+  jobMeta?: Map<string, FilesJobMeta>;
+  /** Sa globalne strane fajlova — dugme Nazad na kartici posla. */
+  jobListReturn?: JobDetailsReturnState;
+  emptyDescription?: string;
+}) {
   const navigate = useNavigate();
   const { id: currentJobId } = useParams();
   const { canPerformAction } = useRole();
   const { deleteFile } = useFiles();
+  const displayCount = totalCount ?? files.length;
 
   const handleDelete = (file: AppFile) => {
     deleteFile.mutate(file.id);
@@ -51,7 +70,7 @@ export function FilesTab({ files }: { files: AppFile[] }) {
     <div>
       <SectionHeader
         title="Fajlovi i dokumenta"
-        subtitle={`${files.length} fajl${files.length === 1 ? "" : "ova"}`}
+        subtitle={`${displayCount} fajl${displayCount === 1 ? "" : "ova"}`}
         icon={FolderOpen}
         actions={canPerformAction("upload_file") ? <UploadFileModal /> : undefined}
       />
@@ -69,11 +88,20 @@ export function FilesTab({ files }: { files: AppFile[] }) {
       )}
 
       {files.length === 0 ? (
-        <EmptyState icon={FolderOpen} title="Nema otpremljenih fajlova" description="Nema fajlova za trenutne filtere ili posao. Otpremite prvi dokument." actionLabel={canPerformAction("upload_file") ? "Otpremi fajl" : undefined} />
+        <EmptyState
+          icon={FolderOpen}
+          title="Nema otpremljenih fajlova"
+          description={
+            emptyDescription ??
+            "Nema fajlova za trenutne filtere ili posao. Otpremite prvi dokument."
+          }
+          actionLabel={canPerformAction("upload_file") ? "Otpremi fajl" : undefined}
+        />
       ) : (
         <div className="grid gap-2">
           {files.map((f) => {
             const showJobLink = !currentJobId && f.jobId;
+            const meta = f.jobId ? jobMeta?.get(f.jobId) : undefined;
             return (
               <div key={f.id} className="bg-card rounded-xl border border-border p-3 sm:p-4 flex items-center gap-3 sm:gap-4 hover:shadow-sm transition-shadow">
                 <div className="w-9 h-9 rounded-lg bg-primary/10 flex items-center justify-center shrink-0">
@@ -87,12 +115,32 @@ export function FilesTab({ files }: { files: AppFile[] }) {
                     <span>{f.uploadedBy}</span>
                     <span>·</span>
                     <span>{formatDateByAppLanguage(f.uploadedAt)}</span>
-                    {showJobLink && (
+                    {showJobLink && f.jobId && (
                       <>
                         <span>·</span>
-                        <button className="text-primary hover:underline font-medium" onClick={(e) => { e.stopPropagation(); navigate(`/jobs/${f.jobId}`); }}>
-                          Pregledaj posao
-                        </button>
+                        {meta ? (
+                          <JobCustomerLink
+                            jobId={f.jobId}
+                            jobNumber={meta.jobNumber}
+                            customerName={meta.customerName}
+                            returnState={jobListReturn}
+                            className="text-[11px]"
+                          />
+                        ) : (
+                          <button
+                            type="button"
+                            className="font-medium text-primary hover:underline"
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              navigate(
+                                `/jobs/${f.jobId}`,
+                                jobListReturn ? { state: jobListReturn } : undefined,
+                              );
+                            }}
+                          >
+                            Pregledaj posao
+                          </button>
+                        )}
                       </>
                     )}
                   </div>

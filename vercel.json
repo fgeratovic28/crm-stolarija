@@ -1,11 +1,35 @@
 {
   "$schema": "https://openapi.vercel.sh/vercel.json",
+  "functions": {
+    "api/quotes/send-multiple.ts": {
+      "maxDuration": 60
+    },
+    "api/material-orders/send-email.ts": {
+      "maxDuration": 60
+    },
+    "api/inbound-email/webhook.ts": {
+      "maxDuration": 30
+    },
+    "api/inbound-email/procurement-webhook.ts": {
+      "maxDuration": 30
+    },
+    "api/proxy-external-image.ts": {
+      "maxDuration": 30
+    },
+    "api/geocode.ts": {
+      "maxDuration": 15
+    }
+  },
   "routes": [
     {
       "handle": "filesystem"
     },
     {
-      "src": "/.*",
+      "src": "/api/(.*)",
+      "dest": "/api/$1"
+    },
+    {
+      "src": "/(.*)",
       "dest": "/index.html"
     }
   ]

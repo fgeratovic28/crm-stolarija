@@ -1,6 +1,7 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import type { QueryClient } from "@tanstack/react-query";
 import { supabase } from "@/lib/supabase";
+import { useAuthStore } from "@/stores/auth-store";
 import type { AppFile, FileCategory } from "@/types";
 import { toast } from "sonner";
 import { upsertSystemActivity } from "@/lib/activity-automation";
@@ -12,6 +13,8 @@ import {
   deleteObjectFromR2,
   uploadFileToR2,
 } from "@/lib/r2-storage";
+import { invalidateFilesStorageUsage } from "@/lib/files-storage-usage";
+import { extensionFromFile, maybeCompressImageForUpload } from "@/lib/compress-image";
 
 export interface UploadFileInput {
   jobId?: string;
@@ -72,16 +75,27 @@ export const mapDbToFile = (d: FileRow): AppFile => {
 };
 
 export function useAllFiles() {
+  const role = useAuthStore((s) => s.user?.role);
+
   return useQuery({
-    queryKey: ["files", "all"],
+    queryKey: ["files", "all", role ?? "none"],
     queryFn: async () => {
-      const { data, error } = await supabase
+      let q = supabase
         .from("files")
         .select(`
           *,
           users (name)
         `)
         .order("uploaded_at", { ascending: false });
+
+      if (role === "procurement") {
+        q = q.not("material_order_id", "is", null);
+      }
+      if (role === "office") {
+        q = q.is("material_order_id", null);
+      }
+
+      const { data, error } = await q;
 
       if (error) throw error;
       return (data ?? []).map((row) => mapDbToFile(row as FileRow));
@@ -97,54 +111,91 @@ export function useFiles() {
       const { jobId, materialOrderId, category, file, uploadedBy } = input;
       const jobIdForDb = toNullableJobId(jobId);
 
+      const prepared = await maybeCompressImageForUpload(file);
+
       // 1. R2: dokumenta → prefiks files/…; terenske foto (field_photos) → field-photos/…; narudžbina → files/material-orders/…
-      const fileExt = file.name.split(".").pop();
+      const fileExt = extensionFromFile(prepared);
       const fileName = `${Date.now()}_${Math.random().toString(36).substring(7)}.${fileExt}`;
       const objectKey = materialOrderId
         ? buildMaterialOrderFileKey(materialOrderId, fileName)
         : category === "field_photos"
           ? buildFieldPhotosFileKey(jobIdForDb ?? undefined, fileName)
           : buildJobFilesObjectKey(jobIdForDb ?? undefined, fileName);
-      const storageUrl = await uploadFileToR2(objectKey, file);
+      const storageUrl = await uploadFileToR2(objectKey, prepared);
 
-      // 2. Insert into files table (linkovanje kao ranije: job_id, category, …)
-      const { data: dbData, error: dbError } = await supabase
-        .from("files")
-        .insert([{
-          job_id: jobIdForDb,
-          material_order_id: materialOrderId ?? null,
-          category,
-          filename: file.name,
-          size: formatSize(file.size),
-          uploaded_by: uploadedBy,
-          uploaded_at: new Date().toISOString(),
-          storage_key: objectKey,
-          storage_url: storageUrl,
-        }])
-        .select(`
+      const materialOrderIdTrimmed = materialOrderId?.trim() ?? "";
+      const useMoSupplierRpc = category === "supplier" && materialOrderIdTrimmed.length > 0;
+
+      // 2. Zapis u `files`: za prilog uz narudžbinu (supplier + material_order_id) koristi RPC
+      //    jer RLS za production često blokira direktan INSERT iako postoji politika za magacin.
+      let dbData: FileRow;
+      if (useMoSupplierRpc) {
+        const { data: rpcRow, error: rpcError } = await supabase.rpc("register_material_order_supplier_file", {
+          p_job_id: jobIdForDb,
+          p_material_order_id: materialOrderIdTrimmed,
+          p_filename: prepared.name || file.name,
+          p_size: formatSize(prepared.size),
+          p_size_bytes: prepared.size,
+          p_storage_key: objectKey,
+          p_storage_url: storageUrl,
+        });
+        if (rpcError) throw rpcError;
+        if (!rpcRow || typeof rpcRow !== "object") {
+          throw new Error("Nepoznat odgovor servera pri čuvanju priloga.");
+        }
+        dbData = rpcRow as FileRow;
+      } else {
+        const { data, error: dbError } = await supabase
+          .from("files")
+          .insert([{
+            job_id: jobIdForDb,
+            material_order_id: materialOrderId ?? null,
+            category,
+            filename: prepared.name || file.name,
+            size: formatSize(prepared.size),
+            size_bytes: prepared.size,
+            uploaded_by: uploadedBy,
+            uploaded_at: new Date().toISOString(),
+            storage_key: objectKey,
+            storage_url: storageUrl,
+          }])
+          .select(`
           *,
           users (name)
         `)
-        .single();
+          .single();
 
-      if (dbError) throw dbError;
+        if (dbError) throw dbError;
+        dbData = data as FileRow;
+      }
 
       if (jobIdForDb) {
+        const displayName = prepared.name || file.name;
         const desc = materialOrderId
-          ? `Prilog narudžbine materijala: ${file.name}`
-          : `Dodat fajl (${labelFileCategory(category)}): ${file.name}`;
-        await upsertSystemActivity({
-          jobId: jobIdForDb,
-          description: desc,
-          systemKey: `file-uploaded:${dbData.id}`,
-          authorId: uploadedBy,
-        });
+          ? `Prilog narudžbine materijala: ${displayName}`
+          : `Dodat fajl (${labelFileCategory(category)}): ${displayName}`;
+        try {
+          await upsertSystemActivity({
+            jobId: jobIdForDb,
+            description: desc,
+            systemKey: `file-uploaded:${dbData.id}`,
+            authorId: uploadedBy,
+          });
+        } catch (err) {
+          // Magacin (production) često nema RLS INSERT na activities za posao bez njihovog RN;
+          // migracija production_activities_* proširuje dozvolu za system_key file-uploaded:*.
+          if (useMoSupplierRpc) {
+            console.warn("[use-files] upsertSystemActivity nakon priloga narudžbine:", err);
+          } else {
+            throw err;
+          }
+        }
       }
 
       const mapped = mapDbToFile(dbData as FileRow);
       return {
         ...mapped,
-        type: file.type.startsWith("image/") ? "image" : "file",
+        type: prepared.type.startsWith("image/") ? "image" : "file",
       } as AppFile;
     },
     onSuccess: (data, variables) => {
@@ -156,6 +207,7 @@ export function useFiles() {
         void invalidateMaterialOrderFilesQueries(queryClient);
       }
       queryClient.invalidateQueries({ queryKey: ["files"] });
+      invalidateFilesStorageUsage(queryClient);
       queryClient.invalidateQueries({ queryKey: ["activities"] });
       toast.success("Fajl uspešno otpremljen");
     },
@@ -184,6 +236,7 @@ export function useFiles() {
     },
     onSuccess: (meta) => {
       queryClient.invalidateQueries({ queryKey: ["files"] });
+      invalidateFilesStorageUsage(queryClient);
       if (meta?.jobId) {
         queryClient.invalidateQueries({ queryKey: ["files", meta.jobId] });
       }

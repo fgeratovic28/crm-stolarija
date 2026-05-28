@@ -48,6 +48,7 @@ export async function upsertJobScopedGeneratedPdf(input: {
       .update({
         storage_key: storageKey,
         size: sizeStr,
+        size_bytes: input.blob.size,
         storage_url: storageUrl,
         uploaded_at: now,
         filename: input.displayFilename,
@@ -63,6 +64,7 @@ export async function upsertJobScopedGeneratedPdf(input: {
         category: input.category,
         filename: input.displayFilename,
         size: sizeStr,
+        size_bytes: input.blob.size,
         uploaded_by: input.uploadedBy,
         uploaded_at: now,
         storage_key: storageKey,

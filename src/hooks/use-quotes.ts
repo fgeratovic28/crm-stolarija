@@ -1,85 +1,116 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { toast } from "sonner";
 import { supabase } from "@/lib/supabase";
-import type { Quote, QuoteLine, QuoteStatus } from "@/types";
-import { buildQuotePdfFileKey, uploadFileToR2 } from "@/lib/r2-storage";
+import type { Quote, QuoteDeliveryMethod, QuoteStatus } from "@/types";
+import { parseQuoteDeliveryMethod, labelQuoteDeliveryMethod } from "@/lib/quote-delivery-method";
+import { normalizeDbQuoteAttachments } from "@/lib/quote-attachments";
 import { labelJobStatus, labelQuoteStatus } from "@/lib/activity-labels";
 import { upsertSystemActivity } from "@/lib/activity-automation";
 import { recomputeJobStatus } from "@/lib/job-status-automation";
-import { syncJobFromNewQuoteIfEmptyJobLines } from "@/lib/sync-job-from-quote";
+import { invalidateFilesStorageUsage } from "@/lib/files-storage-usage";
+import { buildQuotePdfFileKey, deleteObjectFromR2, uploadFileToR2 } from "@/lib/r2-storage";
+import { acceptQuote } from "@/actions/accept-quote";
+import type { VatRatePercent } from "@/lib/vat-constants";
+import { DEFAULT_OUTGOING_VAT_RATE_PERCENT } from "@/lib/vat-constants";
 
 type QuoteRow = {
   id: string;
   job_id: string;
   quote_number: string;
   version_number: number;
+  version_name?: string | null;
   is_final?: boolean | null;
+  is_addon_work?: boolean | null;
   prices_include_vat?: boolean | null;
+  vat_rate_percent?: number | null;
   status: QuoteStatus;
+  delivery_method?: string | null;
   total_amount: number;
   note?: string | null;
   file_url?: string | null;
   file_storage_key?: string | null;
+  file_attachments?: unknown;
   created_by?: string | null;
   created_at: string;
   updated_at: string;
-  quote_lines?: {
-    id: string;
-    quote_id: string;
-    sort_order: number;
-    description: string;
-    quantity: number;
-    unit_price: number;
-  }[];
 };
 
 export type CreateQuoteInput = {
   jobId: string;
-  totalAmount: number;
-  pricesIncludeVat: boolean;
-  lines: Array<{ description: string; quantity: number; unitPrice: number }>;
-  note?: string;
-  isFinalOffer?: boolean;
-  pdfFile?: File;
+  versionName: string;
+  /** Po kreiranju ostaje 0 dok se ponuda ne prihvati ili ručno ne unese iznos. */
+  totalAmount?: number;
+  /** Jedan ili više priloga za istu ponudu. */
+  files: File[];
+  /** Stopa PDV (podrazumevano 20% za nove ponude). */
+  vatRatePercent?: VatRatePercent;
+  pricesIncludeVat?: boolean;
   authorId?: string | null;
+  /** Dopunska ponuda (ne menja status posla pri prihvatanju). */
+  isAddonWork?: boolean;
+  /** Finalna ponuda (post-merni tok, status posla final_quote_*). */
+  isFinalOffer?: boolean;
 };
 
 function mapQuoteRow(row: QuoteRow): Quote {
-  const lines: QuoteLine[] = (row.quote_lines ?? [])
-    .map((line) => ({
-      id: line.id,
-      quoteId: line.quote_id,
-      sortOrder: Number(line.sort_order) || 0,
-      description: line.description || "",
-      quantity: Number(line.quantity) || 0,
-      unitPrice: Number(line.unit_price) || 0,
-    }))
-    .sort((a, b) => a.sortOrder - b.sortOrder);
+  const fileAttachments = normalizeDbQuoteAttachments(
+    row.file_attachments,
+    row.file_url,
+    row.file_storage_key,
+  );
+  const primary = fileAttachments[0];
 
   return {
     id: row.id,
     jobId: row.job_id,
     quoteNumber: row.quote_number,
     versionNumber: Number(row.version_number) || 1,
+    versionName: row.version_name?.trim() || undefined,
     isFinalOffer:
       row.is_final === true ||
       (typeof row.note === "string" && row.note.trim().toLowerCase().startsWith("[final]")),
+    isAddonWork: row.is_addon_work === true,
     pricesIncludeVat: row.prices_include_vat !== false,
+    vatRatePercent: Number(row.vat_rate_percent) === 20 ? 20 : 0,
     status: row.status,
+    deliveryMethod: parseQuoteDeliveryMethod(row.delivery_method),
     totalAmount: Number(row.total_amount) || 0,
     note: row.note ?? undefined,
-    fileUrl: row.file_url ?? undefined,
-    fileStorageKey: row.file_storage_key ?? undefined,
+    fileAttachments,
+    fileUrl: primary?.url ?? row.file_url ?? undefined,
+    fileStorageKey: primary?.storageKey ?? row.file_storage_key ?? undefined,
     createdBy: row.created_by ?? undefined,
     createdAt: row.created_at,
     updatedAt: row.updated_at,
-    lines,
+    lines: [],
   };
 }
 
-function makeQuoteFileName(file: File): string {
-  const ext = file.name.split(".").pop() || "pdf";
-  return `${Date.now()}_${Math.random().toString(36).slice(2)}.${ext.toLowerCase()}`;
+function randomId(): string {
+  if (typeof crypto !== "undefined" && "randomUUID" in crypto) {
+    return crypto.randomUUID();
+  }
+  return `${Date.now()}_${Math.random().toString(36).slice(2, 12)}`;
+}
+
+function sanitizeStorageFileName(name: string): string {
+  const base = name.replace(/[^\w.\u0400-\u04FF()-]+/g, "_").replace(/_+/g, "_");
+  return base.length > 0 ? base.slice(0, 120) : "upload";
+}
+
+function makeQuoteUploadObjectName(file: File): string {
+  const name = file.name.trim() || "document.pdf";
+  const lastDot = name.lastIndexOf(".");
+  const ext = lastDot >= 0 ? name.slice(lastDot + 1).toLowerCase() : "pdf";
+  const base = lastDot >= 0 ? name.slice(0, lastDot) : name;
+  return `${randomId()}_${sanitizeStorageFileName(base)}.${ext || "pdf"}`;
+}
+
+async function uploadQuoteDocumentToR2(jobId: string, file: File): Promise<{ path: string; publicUrl: string }> {
+  const uniqueName = makeQuoteUploadObjectName(file);
+  const path = buildQuotePdfFileKey(jobId, uniqueName);
+  const publicUrl = await uploadFileToR2(path, file);
+  return { path, publicUrl };
 }
 
 async function fetchJobStatus(jobId: string): Promise<string | null> {
@@ -88,97 +119,14 @@ async function fetchJobStatus(jobId: string): Promise<string | null> {
   return typeof data?.status === "string" ? data.status : null;
 }
 
-function sumLineAmounts(lines: { quantity: number; unitPrice: number }[]): number {
-  return lines.reduce((s, l) => s + (Number(l.quantity) || 0) * (Number(l.unitPrice) || 0), 0);
-}
-
-/**
- * Kreira prvu verziju ponude (v1) iz istih stavki kao i posao, npr. odmah posle `jobs` + `job_quote_lines`.
- * Ne baca grešku — vraća rezultat da pozivalac može da upozori korisnika bez poništenja kreiranog posla.
- */
-export async function insertInitialQuoteForNewJob(params: {
-  jobId: string;
-  quoteLines: { description: string; quantity: number; unitPrice: number; sortOrder?: number }[];
-  pricesIncludeVat: boolean;
-  authorId: string | null;
-}): Promise<{ ok: true; quoteId: string } | { ok: false; error: string }> {
-  const lines = params.quoteLines
-    .map((l) => ({
-      description: l.description?.trim() ?? "",
-      quantity: Number(l.quantity) || 0,
-      unitPrice: Number(l.unitPrice) || 0,
-    }))
-    .filter((l) => l.description.length > 0 && l.quantity > 0);
-
-  if (lines.length === 0) {
-    return { ok: false, error: "Nema ispravnih stavki za ponudu" };
-  }
-
-  const totalAmount = sumLineAmounts(lines);
-  if (!Number.isFinite(totalAmount) || totalAmount <= 0) {
-    return { ok: false, error: "Ukupna cena stavki mora biti > 0" };
-  }
-
-  const rowFull = {
-    job_id: params.jobId,
-    total_amount: totalAmount,
-    prices_include_vat: params.pricesIncludeVat,
-    created_by: params.authorId ?? null,
-  };
-  const rowMinimal = {
-    job_id: params.jobId,
-    total_amount: totalAmount,
-    created_by: params.authorId ?? null,
-  };
-
-  let ins = await supabase.from("quotes").insert([rowFull]).select("id").single();
-  if (ins.error) {
-    ins = await supabase.from("quotes").insert([rowMinimal]).select("id").single();
-  }
-  if (ins.error) {
-    return { ok: false, error: ins.error.message };
-  }
-  const createdId = (ins.data as { id: string }).id;
-
-  if (!createdId) return { ok: false, error: "Nije dobijen ID ponude" };
-
-  const { error: linesError } = await supabase.from("quote_lines").insert(
-    lines.map((line, idx) => ({
-      quote_id: createdId,
-      sort_order: idx,
-      description: line.description,
-      quantity: line.quantity,
-      unit_price: line.unitPrice,
-    })),
-  );
-  if (linesError) {
-    return { ok: false, error: linesError.message };
-  }
-
-  const { data: fullQuote, error: fullErr } = await supabase
+async function fetchQuotesForJob(jobId: string): Promise<Quote[]> {
+  const { data, error } = await supabase
     .from("quotes")
-    .select("id, quote_number, version_number, total_amount")
-    .eq("id", createdId)
-    .single();
-  if (fullErr) {
-    return { ok: true, quoteId: createdId };
-  }
-
-  const qn = fullQuote as { quote_number?: string; version_number?: number; total_amount?: number };
-  await upsertSystemActivity({
-    jobId: params.jobId,
-    description: `Kreirana ponuda ${qn.quote_number ?? ""} (v${qn.version_number ?? 1}) — ${Number(qn.total_amount) || totalAmount} (iz unosa posla)`,
-    systemKey: `quote-created-initial:${createdId}`,
-    authorId: params.authorId ?? null,
-  });
-
-  try {
-    await recomputeJobStatus(params.jobId, params.authorId ?? null);
-  } catch (err) {
-    console.warn("insertInitialQuoteForNewJob: recomputeJobStatus", err);
-  }
-
-  return { ok: true, quoteId: createdId };
+    .select("*")
+    .eq("job_id", jobId)
+    .order("created_at", { ascending: false });
+  if (error) throw error;
+  return (data ?? []).map((row) => mapQuoteRow(row as QuoteRow));
 }
 
 export function useQuotes(jobId: string | undefined) {
@@ -189,123 +137,93 @@ export function useQuotes(jobId: string | undefined) {
     queryKey: ["quotes", jobId],
     enabled,
     queryFn: async () => {
-      const { data, error } = await supabase
-        .from("quotes")
-        .select("*, quote_lines(*)")
-        .eq("job_id", jobId)
-        .order("created_at", { ascending: false });
-      if (error) throw error;
-      return (data ?? []).map((row) => mapQuoteRow(row as QuoteRow));
+      if (!jobId) return [];
+      return fetchQuotesForJob(jobId);
     },
   });
 
   const createQuote = useMutation({
     mutationFn: async (input: CreateQuoteInput) => {
-      let fileUrl: string | null = null;
-      let fileStorageKey: string | null = null;
-
-      if (input.pdfFile) {
-        const uniqueName = makeQuoteFileName(input.pdfFile);
-        fileStorageKey = buildQuotePdfFileKey(input.jobId, uniqueName);
-        fileUrl = await uploadFileToR2(fileStorageKey, input.pdfFile);
+      if (input.files.length < 1) {
+        throw new Error("Izaberite bar jedan fajl.");
       }
-
-      const normalizedNote =
-        input.isFinalOffer && input.note?.trim()
-          ? `[FINAL] ${input.note.trim()}`
-          : input.isFinalOffer
-            ? "[FINAL] Finalna ponuda"
-            : input.note?.trim() || null;
-
-      const { data, error } = await supabase
-        .from("quotes")
-        .insert([
-          {
-            job_id: input.jobId,
-            total_amount: input.totalAmount,
-            prices_include_vat: input.pricesIncludeVat,
-            note: normalizedNote,
-            is_final: input.isFinalOffer === true ? true : undefined,
-            file_url: fileUrl,
-            file_storage_key: fileStorageKey,
-            created_by: input.authorId ?? null,
-          },
-        ])
-        .select("*, quote_lines(*)")
-        .single();
-      let createdQuote = data;
-      if (error) {
-        // Backward-compatible fallback: older DB schema may not have `is_final`.
-        const fallback = await supabase
-          .from("quotes")
-          .insert([
-            {
-              job_id: input.jobId,
-              total_amount: input.totalAmount,
-              prices_include_vat: input.pricesIncludeVat,
-              note: normalizedNote,
-              file_url: fileUrl,
-              file_storage_key: fileStorageKey,
-              created_by: input.authorId ?? null,
-            },
-          ])
-          .select("*, quote_lines(*)")
-          .single();
-        if (fallback.error) throw fallback.error;
-        createdQuote = fallback.data;
-      }
-
-      if (input.lines.length > 0) {
-        const { error: linesError } = await supabase.from("quote_lines").insert(
-          input.lines.map((line, idx) => ({
-            quote_id: createdQuote.id,
-            sort_order: idx,
-            description: line.description.trim(),
-            quantity: line.quantity,
-            unit_price: line.unitPrice,
-          })),
+      const uploaded: Array<{ path: string; publicUrl: string }> = [];
+      try {
+        for (const f of input.files) {
+          uploaded.push(await uploadQuoteDocumentToR2(input.jobId, f));
+        }
+      } catch (e) {
+        await Promise.all(
+          uploaded.map((u) => deleteObjectFromR2(u.path).catch(() => undefined)),
         );
-        if (linesError) throw linesError;
+        throw e;
       }
 
-      const { data: fullQuote, error: fullQuoteError } = await supabase
-        .from("quotes")
-        .select("*, quote_lines(*)")
-        .eq("id", createdQuote.id)
-        .single();
-      if (fullQuoteError) throw fullQuoteError;
-
-      const mapped = mapQuoteRow(fullQuote as QuoteRow);
-
-      await syncJobFromNewQuoteIfEmptyJobLines({
-        jobId: input.jobId,
-        lines: input.lines.map((l) => ({
-          description: l.description,
-          quantity: l.quantity,
-          unitPrice: l.unitPrice,
-        })),
-        pricesIncludeVat: input.pricesIncludeVat,
+      const fileAttachments = input.files.map((file, i) => {
+        const u = uploaded[i]!;
+        const fname = (typeof file.name === "string" ? file.name : "").trim();
+        return {
+          url: u.publicUrl,
+          storage_key: u.path,
+          filename: fname ? fname.slice(0, 240) : null,
+          size_bytes: typeof file.size === "number" && Number.isFinite(file.size) ? file.size : 0,
+        };
       });
+      const attachments_total_bytes = fileAttachments.reduce(
+        (sum, row) => sum + (Number(row.size_bytes) || 0),
+        0,
+      );
+      const first = uploaded[0]!;
+
+      const totalAmount = input.totalAmount ?? 0;
+
+      const quoteVat = input.vatRatePercent ?? DEFAULT_OUTGOING_VAT_RATE_PERCENT;
+
+      const rowBase = {
+        job_id: input.jobId,
+        status: "draft" as const,
+        total_amount: totalAmount,
+        version_name: input.versionName.trim(),
+        prices_include_vat: input.pricesIncludeVat !== false,
+        vat_rate_percent: quoteVat,
+        file_attachments: fileAttachments,
+        attachments_total_bytes,
+        file_url: first.publicUrl,
+        file_storage_key: first.path,
+        created_by: input.authorId ?? null,
+        is_addon_work: input.isAddonWork === true,
+        is_final: input.isFinalOffer === true,
+      };
+
+      const ins = await supabase.from("quotes").insert([rowBase]).select("*").single();
+      if (ins.error) {
+        await Promise.all(
+          uploaded.map((u) => deleteObjectFromR2(u.path).catch(() => undefined)),
+        );
+        throw ins.error;
+      }
+
+      const mapped = mapQuoteRow(ins.data as QuoteRow);
+
+      if (input.isAddonWork !== true) {
+        await supabase
+          .from("jobs")
+          .update({ post_measurement_keep_initial_quote: false })
+          .eq("id", input.jobId);
+      }
 
       await upsertSystemActivity({
         jobId: input.jobId,
-        description: `Kreirana ponuda ${mapped.quoteNumber} (v${mapped.versionNumber}) — ${mapped.totalAmount}`,
+        description: `Kreirana ponuda ${mapped.quoteNumber} (${mapped.versionName ?? "verzija"})`,
         systemKey: `quote-created:${mapped.id}`,
         authorId: input.authorId ?? null,
       });
-      if (mapped.fileUrl) {
-        await upsertSystemActivity({
-          jobId: input.jobId,
-          description: `Otpremljen PDF za ponudu ${mapped.quoteNumber}`,
-          systemKey: `quote-pdf-uploaded:${mapped.id}`,
-          authorId: input.authorId ?? null,
-        });
-      }
       try {
         await recomputeJobStatus(input.jobId, input.authorId ?? null);
       } catch (err) {
         console.warn("Auto status recompute failed after quote creation:", err);
       }
+      await queryClient.refetchQueries({ queryKey: ["job", input.jobId] });
       return mapped;
     },
     onSuccess: (_, variables) => {
@@ -313,6 +231,9 @@ export function useQuotes(jobId: string | undefined) {
       queryClient.invalidateQueries({ queryKey: ["job", variables.jobId] });
       queryClient.invalidateQueries({ queryKey: ["jobs"] });
       queryClient.invalidateQueries({ queryKey: ["activities", variables.jobId] });
+      void queryClient.invalidateQueries({ queryKey: ["files", variables.jobId] });
+      void queryClient.invalidateQueries({ queryKey: ["files", "all"] });
+      invalidateFilesStorageUsage(queryClient);
       toast.success("Ponuda je uspešno kreirana");
     },
     onError: (err: Error) => {
@@ -341,17 +262,11 @@ export function useQuotes(jobId: string | undefined) {
       if (!current) throw new Error("Ponuda nije pronađena");
       if (current.status === status) return { skipped: true };
 
-      const beforeJobStatus = await fetchJobStatus(targetJobId);
-
       if (status === "accepted") {
-        const { error: clearAcceptedError } = await supabase
-          .from("quotes")
-          .update({ status: "sent" })
-          .eq("job_id", targetJobId)
-          .neq("id", quoteId)
-          .eq("status", "accepted");
-        if (clearAcceptedError) throw clearAcceptedError;
+        throw new Error('Prihvatanje ponude koristi dugme „Označi kao prihvaćenu“ i potvrdu konačne cene.');
       }
+
+      const beforeJobStatus = await fetchJobStatus(targetJobId);
 
       const { data: updated, error } = await supabase
         .from("quotes")
@@ -361,9 +276,17 @@ export function useQuotes(jobId: string | undefined) {
         .single();
       if (error) throw error;
 
+      if (status === "sent") {
+        await supabase
+          .from("quotes")
+          .update({ delivery_method: "other" })
+          .eq("id", quoteId)
+          .eq("delivery_method", "not_sent");
+      }
+
       await upsertSystemActivity({
         jobId: targetJobId,
-        description: `Status ponude ${updated.quote_number}: ${labelQuoteStatus(current.status)} -> ${labelQuoteStatus(status)}`,
+        description: `Status ponude ${updated.quote_number}: ${labelQuoteStatus(current.status)} → ${labelQuoteStatus(status)}`,
         systemKey: `quote-status:${quoteId}:${status}`,
         authorId: authorId ?? null,
       });
@@ -378,7 +301,7 @@ export function useQuotes(jobId: string | undefined) {
       if (beforeJobStatus && afterJobStatus && beforeJobStatus !== afterJobStatus) {
         await upsertSystemActivity({
           jobId: targetJobId,
-          description: `Status posla promenjen zbog ponude: ${labelJobStatus(beforeJobStatus)} -> ${labelJobStatus(afterJobStatus)}`,
+          description: `Status posla promenjen zbog ponude: ${labelJobStatus(beforeJobStatus)} → ${labelJobStatus(afterJobStatus)}`,
           systemKey: `quote-job-status:${targetJobId}:${beforeJobStatus}:${afterJobStatus}`,
           authorId: authorId ?? null,
         });
@@ -399,10 +322,124 @@ export function useQuotes(jobId: string | undefined) {
     },
   });
 
+  const markQuoteDeliveryMethod = useMutation({
+    mutationFn: async ({
+      quoteId,
+      jobId: targetJobId,
+      deliveryMethod,
+      authorId,
+    }: {
+      quoteId: string;
+      jobId: string;
+      deliveryMethod: QuoteDeliveryMethod;
+      authorId?: string | null;
+    }) => {
+      if (deliveryMethod === "not_sent") {
+        throw new Error("Izaberite način slanja.");
+      }
+
+      const { data: current, error: currentError } = await supabase
+        .from("quotes")
+        .select("id, quote_number, status, delivery_method")
+        .eq("id", quoteId)
+        .single();
+      if (currentError) throw currentError;
+      if (!current) throw new Error("Ponuda nije pronađena");
+      if (current.status === "zamenjena") {
+        throw new Error("Za ovu (staru) verziju ponude nije moguća evidencija slanja.");
+      }
+
+      const beforeJobStatus = await fetchJobStatus(targetJobId);
+      const wasDraft = current.status === "draft";
+      const patch: { delivery_method: QuoteDeliveryMethod; status?: QuoteStatus } = {
+        delivery_method: deliveryMethod,
+      };
+      if (wasDraft) {
+        patch.status = "sent";
+      }
+
+      const { data: updated, error } = await supabase
+        .from("quotes")
+        .update(patch)
+        .eq("id", quoteId)
+        .select("id, quote_number, status, delivery_method")
+        .single();
+      if (error) throw error;
+
+      await upsertSystemActivity({
+        jobId: targetJobId,
+        description: `Evidencija slanja ponude ${updated.quote_number}: ${labelQuoteDeliveryMethod(deliveryMethod)}${
+          wasDraft ? " (status: Poslata)" : ""
+        }`,
+        systemKey: `quote-delivery:${quoteId}:${deliveryMethod}:${Date.now()}`,
+        authorId: authorId ?? null,
+      });
+
+      if (wasDraft) {
+        try {
+          await recomputeJobStatus(targetJobId, authorId ?? null);
+        } catch (err) {
+          console.warn("Auto status recompute failed after marking quote sent:", err);
+        }
+
+        const afterJobStatus = await fetchJobStatus(targetJobId);
+        if (beforeJobStatus && afterJobStatus && beforeJobStatus !== afterJobStatus) {
+          await upsertSystemActivity({
+            jobId: targetJobId,
+            description: `Status posla promenjen zbog ponude: ${labelJobStatus(beforeJobStatus)} → ${labelJobStatus(afterJobStatus)}`,
+            systemKey: `quote-job-status:${targetJobId}:${beforeJobStatus}:${afterJobStatus}`,
+            authorId: authorId ?? null,
+          });
+        }
+      }
+
+      return { skipped: false };
+    },
+    onSuccess: (_, variables) => {
+      queryClient.invalidateQueries({ queryKey: ["quotes", variables.jobId] });
+      queryClient.invalidateQueries({ queryKey: ["job", variables.jobId] });
+      queryClient.invalidateQueries({ queryKey: ["jobs"] });
+      queryClient.invalidateQueries({ queryKey: ["activities", variables.jobId] });
+      toast.success("Evidencija slanja je sačuvana.");
+    },
+    onError: (err: Error) => {
+      toast.error("Greška pri čuvanju evidencije", { description: err.message });
+    },
+  });
+
+  const acceptQuoteMutation = useMutation({
+    mutationFn: async (input: {
+      quoteId: string;
+      jobId: string;
+      totalPrice?: number;
+      vatRatePercent?: number;
+      pricesIncludeVat?: boolean;
+      authorId?: string | null;
+    }) => {
+      await acceptQuote(input);
+    },
+    onSuccess: (_, variables) => {
+      queryClient.invalidateQueries({ queryKey: ["quotes", variables.jobId] });
+      queryClient.invalidateQueries({ queryKey: ["job", variables.jobId] });
+      queryClient.invalidateQueries({ queryKey: ["jobs"] });
+      queryClient.invalidateQueries({ queryKey: ["activities", variables.jobId] });
+      void queryClient.invalidateQueries({ queryKey: ["finances-summary"] });
+      const priced = typeof variables.totalPrice === "number" && variables.totalPrice > 0;
+      toast.success(
+        priced ? "Ponuda je prihvaćena; cena na poslu je ažurirana." : "Ponuda je prihvaćena.",
+      );
+    },
+    onError: (err: Error) => {
+      toast.error(err.message || "Prihvatanje ponude nije uspelo.");
+    },
+  });
+
   return {
     quotes: quotes.data ?? [],
     isLoading: quotes.isLoading,
     createQuote,
     updateQuoteStatus,
+    markQuoteDeliveryMethod,
+    acceptQuote: acceptQuoteMutation,
   };
 }

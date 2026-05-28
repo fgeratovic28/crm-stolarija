@@ -1,5 +1,6 @@
-import { useMemo, useState } from "react";
-import { ClipboardList, AlertTriangle } from "lucide-react";
+import { useEffect, useMemo, useState } from "react";
+import { useSearchParams } from "react-router-dom";
+import { ClipboardList, AlertTriangle, X, Calendar } from "lucide-react";
 import { AppLayout } from "@/components/layout/AppLayout";
 import { PageHeader } from "@/components/shared/PageHeader";
 import { Breadcrumbs } from "@/components/shared/Breadcrumbs";
@@ -10,15 +11,59 @@ import { useWorkOrders } from "@/hooks/use-work-orders";
 import { useTeams } from "@/hooks/use-teams";
 import { WorkOrdersTab } from "@/components/job-tabs/WorkOrdersTab";
 import { Button } from "@/components/ui/button";
+import { Input } from "@/components/ui/input";
+import { Label } from "@/components/ui/label";
 import { formatQueryError } from "@/lib/utils";
-import { workOrderTypeFilterOptions } from "@/lib/work-order-types-ui";
+import { workOrderMatchesTypeFilter, workOrderTypeFilterOptions } from "@/lib/work-order-types-ui";
+import { formatDateByAppLanguage } from "@/lib/app-settings";
+import {
+  formatLocalDateYmd,
+  isLocalDateTodayYmd,
+  isWorkOrderScheduledOnDayYmd,
+} from "@/lib/work-order-schedule-calendar";
 
 const TEAM_FILTER_UNASSIGNED = "unassigned";
 
+const DEFAULT_FILTERS = { status: "all", type: "all", team: "all" } as const;
+
 export default function WorkOrdersPage() {
+  const [searchParams] = useSearchParams();
   const { workOrders, isLoading, isError, error } = useWorkOrders();
   const { teams } = useTeams();
-  const [filters, setFilters] = useState<Record<string, string>>({ status: "all", type: "all", team: "all" });
+  const statusFromUrl = searchParams.get("status");
+  const typeFromUrl = searchParams.get("type");
+  const [filters, setFilters] = useState<Record<string, string>>(() => ({
+    status:
+      statusFromUrl === "pending" ||
+      statusFromUrl === "in_progress" ||
+      statusFromUrl === "completed" ||
+      statusFromUrl === "canceled"
+        ? statusFromUrl
+        : DEFAULT_FILTERS.status,
+    type: typeFromUrl && typeFromUrl !== "all" ? typeFromUrl : DEFAULT_FILTERS.type,
+    team: DEFAULT_FILTERS.team,
+  }));
+  const [scheduleDate, setScheduleDate] = useState("");
+
+  useEffect(() => {
+    const status = searchParams.get("status");
+    const type = searchParams.get("type");
+    setFilters((prev) => {
+      const next = { ...prev };
+      if (
+        status === "pending" ||
+        status === "in_progress" ||
+        status === "completed" ||
+        status === "canceled"
+      ) {
+        next.status = status;
+      }
+      if (type && type !== "all") {
+        next.type = type;
+      }
+      return prev.status === next.status && prev.type === next.type ? prev : next;
+    });
+  }, [searchParams]);
 
   const filterConfigs = useMemo((): FilterConfig[] => {
     const teamOptions = [
@@ -48,6 +93,11 @@ export default function WorkOrdersPage() {
     ];
   }, [teams]);
 
+  const resetAllFilters = () => {
+    setFilters({ ...DEFAULT_FILTERS });
+    setScheduleDate("");
+  };
+
   if (isError) {
     return (
       <AppLayout title="Greška">
@@ -68,24 +118,86 @@ export default function WorkOrdersPage() {
 
   const filtered = (workOrders || []).filter((w) => {
     const matchStatus = filters.status === "all" || w.status === filters.status;
-    const matchType = filters.type === "all" || w.type === filters.type;
+    const matchType = workOrderMatchesTypeFilter(filters.type, w.type);
     const matchTeam =
       filters.team === "all"
         ? true
         : filters.team === TEAM_FILTER_UNASSIGNED
           ? !w.assignedTeamId
           : w.assignedTeamId === filters.team;
-    return matchStatus && matchType && matchTeam;
+    const matchScheduleDate =
+      !scheduleDate || isWorkOrderScheduledOnDayYmd(w.date, scheduleDate);
+    return matchStatus && matchType && matchTeam && matchScheduleDate;
   });
+
+  const scheduleDateLabel = scheduleDate
+    ? formatDateByAppLanguage(scheduleDate) || scheduleDate
+    : null;
+
+  const pageDescription = scheduleDate
+    ? `${filtered.length} zakazanih naloga za ${scheduleDateLabel}`
+    : `${filtered.length} od ${workOrders?.length || 0} naloga`;
 
   return (
     <AppLayout>
       <PageTransition>
         <Breadcrumbs items={[{ label: "Radni nalozi" }]} />
-        <PageHeader title="Radni nalozi" description={`${filtered.length} od ${workOrders?.length || 0} naloga`} icon={ClipboardList} />
+        <PageHeader title="Radni nalozi" description={pageDescription} icon={ClipboardList} />
         <div className="mb-4 space-y-2">
-          <FilterBar filters={filterConfigs} values={filters} onChange={(k, v) => setFilters(p => ({ ...p, [k]: v }))} onReset={() => setFilters({ status: "all", type: "all", team: "all" })} />
-          <ActiveFilterChips filters={filterConfigs} values={filters} onChange={(k, v) => setFilters(p => ({ ...p, [k]: v }))} />
+          <div className="flex flex-wrap items-center gap-2">
+            <FilterBar
+              filters={filterConfigs}
+              values={filters}
+              onChange={(k, v) => setFilters((p) => ({ ...p, [k]: v }))}
+              onReset={resetAllFilters}
+            />
+            <div className="flex items-center gap-1.5">
+              <Label htmlFor="wo-schedule-date" className="sr-only">
+                Datum zakazivanja
+              </Label>
+              <div className="relative">
+                <Calendar className="pointer-events-none absolute left-2.5 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-muted-foreground" />
+                <Input
+                  id="wo-schedule-date"
+                  type="date"
+                  className="h-8 w-auto min-w-[11.5rem] pl-8 text-xs"
+                  value={scheduleDate}
+                  onChange={(e) => setScheduleDate(e.target.value)}
+                  aria-label="Datum zakazivanja"
+                />
+              </div>
+              <Button
+                type="button"
+                variant="outline"
+                size="sm"
+                className="h-8 text-xs"
+                onClick={() => setScheduleDate(formatLocalDateYmd(new Date()))}
+              >
+                Danas
+              </Button>
+            </div>
+          </div>
+          <div className="flex flex-wrap gap-1.5">
+            <ActiveFilterChips
+              filters={filterConfigs}
+              values={filters}
+              onChange={(k, v) => setFilters((p) => ({ ...p, [k]: v }))}
+            />
+            {scheduleDate && (
+              <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-xs font-medium bg-primary/10 text-primary">
+                Datum: {scheduleDateLabel}
+                {isLocalDateTodayYmd(scheduleDate) ? " (danas)" : ""}
+                <button
+                  type="button"
+                  onClick={() => setScheduleDate("")}
+                  className="hover:text-primary/70"
+                  aria-label="Ukloni filter datuma"
+                >
+                  <X className="w-3 h-3" />
+                </button>
+              </span>
+            )}
+          </div>
         </div>
         <WorkOrdersTab workOrders={filtered} />
       </PageTransition>

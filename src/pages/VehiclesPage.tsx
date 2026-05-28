@@ -18,6 +18,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { TableSkeleton } from "@/components/shared/Skeletons";
 import { GenericBadge } from "@/components/shared/StatusBadge";
 import { EmptyState } from "@/components/shared/EmptyState";
+import { ConfirmDialog } from "@/components/shared/ConfirmDialog";
 
 type VehiclesStatusFilter = "all" | VehicleStatus;
 
@@ -140,8 +141,6 @@ export default function VehiclesPage() {
   };
 
   const handleDelete = (vehicle: Vehicle) => {
-    const ok = confirm(`Da li ste sigurni da želite da obrišete vozilo "${vehicle.vehicleName}"?`);
-    if (!ok) return;
     deleteVehicle.mutate(vehicle.id);
   };
 
@@ -278,15 +277,23 @@ export default function VehiclesPage() {
                           )}
 
                           {canPerformAction("delete_vehicle") && (
-                            <Button
-                              variant="ghost"
-                              size="sm"
-                              className="text-destructive hover:text-destructive hover:bg-destructive/10"
-                              onClick={() => handleDelete(v)}
-                              title="Obriši"
-                            >
-                              <Trash2 className="w-4 h-4" />
-                            </Button>
+                            <ConfirmDialog
+                              title="Obrisati vozilo?"
+                              description={`Da li ste sigurni da želite da obrišete vozilo "${v.vehicleName}"? Ova akcija je nepovratna.`}
+                              confirmLabel="Obriši"
+                              cancelLabel="Otkaži"
+                              onConfirm={() => handleDelete(v)}
+                              trigger={
+                                <Button
+                                  variant="ghost"
+                                  size="sm"
+                                  className="text-destructive hover:text-destructive hover:bg-destructive/10"
+                                  title="Obriši"
+                                >
+                                  <Trash2 className="w-4 h-4" />
+                                </Button>
+                              }
+                            />
                           )}
                         </div>
                       </TableCell>

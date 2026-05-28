@@ -10,6 +10,7 @@ export type AppSettingsCache = {
   overdueDays: number;
   customerPrefix: string;
   jobPrefix: string;
+  jobNumberFormat: "legacy" | "numeric";
   notifOverduePayments: boolean;
   notifLateDeliveries: boolean;
   notifUpcomingInstalls: boolean;
@@ -35,7 +36,8 @@ const DEFAULT_SETTINGS_CACHE: AppSettingsCache = {
   currency: "RSD",
   overdueDays: 30,
   customerPrefix: "KU-",
-  jobPrefix: "P-",
+  jobPrefix: "P",
+  jobNumberFormat: "legacy",
   notifOverduePayments: true,
   notifLateDeliveries: true,
   notifUpcomingInstalls: true,
@@ -99,8 +101,9 @@ export function readAppSettingsCache(): AppSettingsCache {
           : 30,
       jobPrefix:
         typeof parsed.jobPrefix === "string" && parsed.jobPrefix.trim().length > 0
-          ? parsed.jobPrefix
-          : "P-",
+          ? parsed.jobPrefix.trim()
+          : "P",
+      jobNumberFormat: parsed.jobNumberFormat === "numeric" ? "numeric" : "legacy",
       customerPrefix:
         typeof parsed.customerPrefix === "string" && parsed.customerPrefix.trim().length > 0
           ? parsed.customerPrefix
@@ -168,6 +171,7 @@ export async function syncAppSettingsCacheFromSupabase(): Promise<void> {
         overdue_days,
         customer_prefix,
         job_prefix,
+        job_number_format,
         notif_overdue_payments,
         notif_late_deliveries,
         notif_upcoming_installs,
@@ -199,6 +203,7 @@ export async function syncAppSettingsCacheFromSupabase(): Promise<void> {
           : cur.overdueDays,
       customerPrefix: strField(row.customer_prefix) || cur.customerPrefix,
       jobPrefix: strField(row.job_prefix) || cur.jobPrefix,
+      jobNumberFormat: row.job_number_format === "numeric" ? "numeric" : "legacy",
       notifOverduePayments: row.notif_overdue_payments !== false,
       notifLateDeliveries: row.notif_late_deliveries !== false,
       notifUpcomingInstalls: row.notif_upcoming_installs !== false,
@@ -230,16 +235,42 @@ function pad2(v: number): string {
   return String(v).padStart(2, "0");
 }
 
-export function formatDateBySettings(date: Date | string | number): string {
-  const d = date instanceof Date ? date : new Date(date);
-  if (Number.isNaN(d.getTime())) return "";
-  const { dateFormat } = readAppSettingsCache();
-  const dd = pad2(d.getDate());
-  const mm = pad2(d.getMonth() + 1);
-  const yyyy = String(d.getFullYear());
+function formatYmdParts(
+  yyyy: string,
+  mm: string,
+  dd: string,
+  dateFormat: AppSettingsCache["dateFormat"] = readAppSettingsCache().dateFormat,
+): string {
   if (dateFormat === "yyyy-MM-dd") return `${yyyy}-${mm}-${dd}`;
   if (dateFormat === "dd/MM/yyyy") return `${dd}/${mm}/${yyyy}`;
   return `${dd}.${mm}.${yyyy}`;
+}
+
+/** Prikaz kalendarskog datuma (npr. `2026-05-30` iz baze) bez pomaka zbog vremenske zone. */
+export function formatDateOnlyForDisplay(
+  value: string | null | undefined,
+  dateFormat?: AppSettingsCache["dateFormat"],
+): string {
+  const raw = value?.trim();
+  if (!raw) return "";
+  const ymd = raw.match(/^(\d{4})-(\d{2})-(\d{2})/);
+  if (ymd) return formatYmdParts(ymd[1], ymd[2], ymd[3], dateFormat);
+  return formatDateBySettings(raw) || raw;
+}
+
+/** Datumi na karticama narudžbina materijala — uvek `dd/mm/yyyy`. */
+export function formatMaterialOrderDateForDisplay(value: string | null | undefined): string {
+  return formatDateOnlyForDisplay(value, "dd/MM/yyyy");
+}
+
+export function formatDateBySettings(date: Date | string | number): string {
+  const raw = typeof date === "string" ? date.trim() : "";
+  const ymd = raw.match(/^(\d{4})-(\d{2})-(\d{2})/);
+  if (ymd) return formatYmdParts(ymd[1], ymd[2], ymd[3]);
+
+  const d = date instanceof Date ? date : new Date(date);
+  if (Number.isNaN(d.getTime())) return "";
+  return formatYmdParts(String(d.getFullYear()), pad2(d.getMonth() + 1), pad2(d.getDate()));
 }
 
 export function formatDateTimeBySettings(date: Date | string | number): string {

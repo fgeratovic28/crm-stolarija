@@ -1,6 +1,7 @@
+import { useState } from "react";
 import { useFieldArray, useWatch } from "react-hook-form";
 import type { Control } from "react-hook-form";
-import { Plus, Trash2 } from "lucide-react";
+import { ChevronDown, Plus, Trash2 } from "lucide-react";
 import {
   FormControl,
   FormField,
@@ -10,9 +11,16 @@ import {
 } from "@/components/ui/form";
 import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
+import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "@/components/ui/collapsible";
 import type { NarudzbenicaFieldsValues, MaterialOrderLineFormValues } from "@/lib/material-order-form-schema";
-import { totalNetFromFormLines } from "@/lib/material-order-form-schema";
-import { formatCurrencyBySettings } from "@/lib/app-settings";
+import {
+  PROCUREMENT_FIELD_LABELS_COMPACT,
+} from "@/lib/procurement-excel-import";
+import { cn } from "@/lib/utils";
+
+/** Jasno odvojen sklopivi naslov za nabavna polja. */
+const collapsibleBarTriggerClass =
+  "w-full justify-between rounded-md border border-border bg-muted/40 px-3 py-2.5 text-left text-xs font-medium text-foreground shadow-sm hover:bg-muted/55 hover:border-muted-foreground/20";
 
 interface NarudzbenicaFieldsProps {
   control: Control<NarudzbenicaFieldsValues>;
@@ -27,18 +35,22 @@ const defaultLine = {
 };
 
 export function NarudzbenicaFields({ control }: NarudzbenicaFieldsProps) {
+  const [procurementOpen, setProcurementOpen] = useState<Record<string, boolean>>({});
+
   const { fields, append, remove } = useFieldArray({
     control,
     name: "nbLines",
   });
 
-  const watchedLines = useWatch({ control, name: "nbLines" }) as MaterialOrderLineFormValues[] | undefined;
-  const totalNet = totalNetFromFormLines(watchedLines ?? []);
+  useWatch({ control, name: "nbLines" }) as MaterialOrderLineFormValues[] | undefined;
 
   return (
     <div className="space-y-6">
       <div className="space-y-4">
-        <p className="text-sm font-medium text-foreground">Stavke (iznos bez PDV-a po redu)</p>
+        <p className="text-sm font-medium text-foreground">
+          Stavke
+        </p>
+
         {fields.map((field, index) => (
           <div key={field.id} className="rounded-lg border border-border bg-background p-4 space-y-3">
             <div className="flex items-center justify-between gap-2">
@@ -73,7 +85,7 @@ export function NarudzbenicaFields({ control }: NarudzbenicaFieldsProps) {
               )}
             />
 
-            <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+            <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
               <FormField
                 control={control}
                 name={`nbLines.${index}.quantity`}
@@ -112,30 +124,111 @@ export function NarudzbenicaFields({ control }: NarudzbenicaFieldsProps) {
                 )}
               />
 
-              <FormField
-                control={control}
-                name={`nbLines.${index}.lineNet`}
-                render={({ field: f }) => (
-                  <FormItem>
-                    <FormLabel>Iznos (bez PDV)</FormLabel>
-                    <FormControl>
-                      <Input
-                        type="number"
-                        step="any"
-                        min={0}
-                        {...f}
-                        value={f.value === undefined || f.value === null ? "" : f.value}
-                        onChange={(e) => {
-                          const v = e.target.value;
-                          f.onChange(v === "" ? undefined : Number(v.replace(",", ".")));
-                        }}
-                      />
-                    </FormControl>
-                    <FormMessage />
-                  </FormItem>
-                )}
-              />
             </div>
+
+            <Collapsible
+              open={Boolean(procurementOpen[field.id])}
+              onOpenChange={(open) => setProcurementOpen((prev) => ({ ...prev, [field.id]: open }))}
+            >
+              <CollapsibleTrigger asChild>
+                <Button type="button" variant="ghost" size="sm" className={cn(collapsibleBarTriggerClass, "font-normal")}>
+                  <span className="text-muted-foreground">Opciono — nabavna polja (nalog, poz., šifra, boja, dužina)</span>
+                  <ChevronDown
+                    className={cn(
+                      "h-4 w-4 shrink-0 opacity-70 transition-transform",
+                      procurementOpen[field.id] ? "rotate-180" : "",
+                    )}
+                  />
+                </Button>
+              </CollapsibleTrigger>
+              <CollapsibleContent>
+                <p className="mb-3 text-[11px] text-muted-foreground border-t border-border/80 pt-3">
+                  Artikal, količina i JM dolaze iz reda iznad. Ovde samo dodatne nabavne kolone (isti smisao kao mapiranje
+                  Excel kolona, bez fajla).
+                </p>
+                <div className="grid grid-cols-2 sm:grid-cols-3 gap-2">
+                  <FormField
+                    control={control}
+                    name={`nbLines.${index}.procurementMeta.work_order`}
+                    render={({ field: f }) => (
+                      <FormItem className="space-y-1">
+                        <FormLabel className="text-[11px]">{PROCUREMENT_FIELD_LABELS_COMPACT.work_order}</FormLabel>
+                        <FormControl>
+                          <Input className="h-8 text-xs" placeholder="—" {...f} value={f.value ?? ""} />
+                        </FormControl>
+                        <FormMessage />
+                      </FormItem>
+                    )}
+                  />
+                  <FormField
+                    control={control}
+                    name={`nbLines.${index}.procurementMeta.position`}
+                    render={({ field: f }) => (
+                      <FormItem className="space-y-1">
+                        <FormLabel className="text-[11px]">{PROCUREMENT_FIELD_LABELS_COMPACT.position}</FormLabel>
+                        <FormControl>
+                          <Input className="h-8 text-xs" placeholder="—" {...f} value={f.value ?? ""} />
+                        </FormControl>
+                        <FormMessage />
+                      </FormItem>
+                    )}
+                  />
+                  <FormField
+                    control={control}
+                    name={`nbLines.${index}.procurementMeta.article_code`}
+                    render={({ field: f }) => (
+                      <FormItem className="space-y-1">
+                        <FormLabel className="text-[11px]">{PROCUREMENT_FIELD_LABELS_COMPACT.article_code}</FormLabel>
+                        <FormControl>
+                          <Input className="h-8 text-xs" placeholder="—" {...f} value={f.value ?? ""} />
+                        </FormControl>
+                        <FormMessage />
+                      </FormItem>
+                    )}
+                  />
+                  <FormField
+                    control={control}
+                    name={`nbLines.${index}.procurementMeta.color`}
+                    render={({ field: f }) => (
+                      <FormItem className="space-y-1">
+                        <FormLabel className="text-[11px]">{PROCUREMENT_FIELD_LABELS_COMPACT.color}</FormLabel>
+                        <FormControl>
+                          <Input className="h-8 text-xs" placeholder="—" {...f} value={f.value ?? ""} />
+                        </FormControl>
+                        <FormMessage />
+                      </FormItem>
+                    )}
+                  />
+                  <FormField
+                    control={control}
+                    name={`nbLines.${index}.procurementMeta.length_mm`}
+                    render={({ field: f }) => (
+                      <FormItem className="space-y-1">
+                        <FormLabel className="text-[11px]">{PROCUREMENT_FIELD_LABELS_COMPACT.length_mm}</FormLabel>
+                        <FormControl>
+                          <Input
+                            className="h-8 text-xs"
+                            type="number"
+                            step="any"
+                            min={0}
+                            placeholder="—"
+                            value={f.value === undefined || f.value === null ? "" : f.value}
+                            onChange={(e) => {
+                              const v = e.target.value;
+                              f.onChange(v === "" ? null : Number(v.replace(",", ".")));
+                            }}
+                            onBlur={f.onBlur}
+                            name={f.name}
+                            ref={f.ref}
+                          />
+                        </FormControl>
+                        <FormMessage />
+                      </FormItem>
+                    )}
+                  />
+                </div>
+              </CollapsibleContent>
+            </Collapsible>
           </div>
         ))}
 
@@ -149,39 +242,6 @@ export function NarudzbenicaFields({ control }: NarudzbenicaFieldsProps) {
           <Plus className="w-4 h-4" />
           Dodaj stavku
         </Button>
-
-        <div className="flex flex-col gap-1 rounded-md border border-border bg-muted/50 px-4 py-3 sm:flex-row sm:items-center sm:justify-between">
-          <span className="text-sm font-semibold text-foreground">Ukupno bez PDV-a</span>
-          <span className="text-base font-semibold tabular-nums">{formatCurrencyBySettings(totalNet)}</span>
-        </div>
-      </div>
-
-      <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 border-t border-border pt-4">
-        <FormField
-          control={control}
-          name="nbVatRatePercent"
-          render={({ field }) => (
-            <FormItem>
-              <FormLabel>PDV % (na ukupan iznos)</FormLabel>
-              <FormControl>
-                <Input
-                  type="number"
-                  step="0.01"
-                  min={0}
-                  max={100}
-                  placeholder="20"
-                  {...field}
-                  value={field.value === undefined || field.value === null ? "" : field.value}
-                  onChange={(e) => {
-                    const v = e.target.value;
-                    field.onChange(v === "" ? undefined : Number(v.replace(",", ".")));
-                  }}
-                />
-              </FormControl>
-              <FormMessage />
-            </FormItem>
-          )}
-        />
       </div>
     </div>
   );

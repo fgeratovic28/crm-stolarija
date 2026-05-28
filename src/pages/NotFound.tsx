@@ -1,6 +1,6 @@
 import { useLocation } from "react-router-dom";
 import { useEffect } from "react";
-import { Hammer, ArrowLeft } from "lucide-react";
+import { ArrowLeft } from "lucide-react";
 import { Button } from "@/components/ui/button";
 
 const NotFound = () => {
@@ -13,8 +13,15 @@ const NotFound = () => {
   return (
     <div className="flex min-h-screen items-center justify-center bg-background p-4">
       <div className="text-center max-w-sm">
-        <div className="w-16 h-16 rounded-2xl bg-primary/10 flex items-center justify-center mx-auto mb-6">
-          <Hammer className="w-8 h-8 text-primary" />
+        <div className="mx-auto mb-6 flex h-16 w-16 items-center justify-center rounded-2xl bg-white p-2 shadow-sm ring-1 ring-border/80 dark:bg-white dark:ring-white/20">
+          <img
+            src="/logo.png"
+            alt=""
+            className="h-10 w-auto max-w-[3rem] object-contain"
+            width={120}
+            height={40}
+            decoding="async"
+          />
         </div>
         <h1 className="text-5xl font-bold text-foreground mb-2">404</h1>
         <p className="text-lg text-muted-foreground mb-1">Stranica nije pronađena</p>

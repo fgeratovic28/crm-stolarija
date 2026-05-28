@@ -1,7 +1,4 @@
 import { Navigate, useLocation } from "react-router-dom";
-import { AppSessionLoadingScreen } from "@/components/AppSessionLoadingScreen";
-import { AuthHydratingFallback } from "@/components/AuthHydratingFallback";
-import { hasRichSplashCompleted } from "@/lib/rich-splash-session";
 import { useAuthStore } from "@/stores/auth-store";
 import { useRole } from "@/contexts/RoleContext";
 import { type ModuleName } from "@/config/permissions";
@@ -17,22 +14,12 @@ export function ProtectedRoute({ children, module }: ProtectedRouteProps) {
   const { hasAccess } = useRole();
   const location = useLocation();
 
-  if (!authReady) {
-    if (hasRichSplashCompleted()) {
-      return <AuthHydratingFallback />;
-    }
-    return <AppSessionLoadingScreen sessionReady={false} />;
+  if (!authReady || (isAuthenticated && !authProfileReady)) {
+    return null;
   }
 
   if (!isAuthenticated) {
     return <Navigate to="/login" state={{ from: location }} replace />;
-  }
-
-  if (!authProfileReady) {
-    if (hasRichSplashCompleted()) {
-      return <AuthHydratingFallback />;
-    }
-    return <AppSessionLoadingScreen sessionReady={false} />;
   }
 
   if (isPendingApproval && location.pathname !== "/pending-approval") {

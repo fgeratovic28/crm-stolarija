@@ -1,16 +1,22 @@
 import { NavLink, useLocation } from "react-router-dom";
 import {
   LayoutDashboard, Users, Activity, DollarSign, Package, ClipboardList,
-  FileText, FolderOpen, Shield, Settings, X, Hammer, Truck, Briefcase, Layers, Wrench, ChevronDown, MapPinned,
+  FileText, FolderOpen, Shield, Settings, X, Truck, Briefcase, Layers, Wrench, MapPinned,
   Receipt,
+  HardDrive,
+  ScanBarcode,
+  Building2,
 } from "lucide-react";
+import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 import type { LucideIcon } from "lucide-react";
-import { useMemo, useState } from "react";
+import { useMemo } from "react";
 import { cn } from "@/lib/utils";
 import { useRole } from "@/contexts/RoleContext";
 import { useI18n } from "@/contexts/I18nContext";
 import { type ModuleName } from "@/config/permissions";
 import { ROLE_CONFIG, type UserRole } from "@/types";
+import { TermoPlastCrmTitle } from "@/components/shared/TermoPlastCrmTitle";
+import { useFilesStorageUsage } from "@/hooks/use-files-storage-usage";
 
 interface NavItem {
   to: string;
@@ -30,23 +36,30 @@ const dashboardItem: NavItem = { to: "/", icon: LayoutDashboard, labelKey: "nav.
 const settingsItem: NavItem = { to: "/settings", icon: Settings, labelKey: "nav.settings", module: "settings" };
 
 const salesFinanceBaseChildren: NavItem[] = [
-  { to: "/jobs?tab=customers", icon: Users, labelKey: "nav.customers", module: "customers" },
-  { to: "/jobs?tab=jobs", icon: Briefcase, labelKey: "nav.jobsOnly", module: "jobs" },
-  { to: "/jobs-map", icon: MapPinned, labelKey: "nav.completedJobsMap", module: "jobs" },
+  { to: "/customers", icon: Users, labelKey: "nav.customers", module: "customers" },
+  { to: "/jobs", icon: Briefcase, labelKey: "nav.jobsOnly", module: "jobs" },
+  { to: "/jobs-map", icon: MapPinned, labelKey: "nav.completedJobsMap", module: "jobs-map" },
   { to: "/activities", icon: Activity, labelKey: "nav.activities", module: "activities" },
 ];
 
 /** Tri stavke samo za ulogu `finance`; ostali (admin, kancelarija, …) vide jednu „Finansije“. */
 const financeNavSplit: NavItem[] = [
-  { to: "/finances?tab=overview", icon: DollarSign, labelKey: "nav.financeOverview", module: "finances" },
-  { to: "/finances?tab=payments", icon: Receipt, labelKey: "nav.financePayments", module: "finances" },
-  { to: "/finances?tab=reports", icon: FileText, labelKey: "nav.financeReports", module: "finances" },
+  { to: "/finances", icon: DollarSign, labelKey: "nav.financeOverview", module: "finances" },
+  { to: "/finances", icon: Receipt, labelKey: "nav.financePayments", module: "finances" },
+  { to: "/finances", icon: FileText, labelKey: "nav.financeReports", module: "finances" },
 ];
 
 const financeNavSingle: NavItem = {
-  to: "/finances?tab=overview",
+  to: "/finances",
   icon: DollarSign,
   labelKey: "nav.finances",
+  module: "finances",
+};
+
+const procurementFinanceItem: NavItem = {
+  to: "/finances",
+  icon: Receipt,
+  labelKey: "nav.financePayments",
   module: "finances",
 };
 
@@ -56,8 +69,9 @@ const navGroupsTail: NavGroup[] = [
     label: "Resursi i Nabavka",
     icon: Package,
     children: [
-      { to: "/suppliers", icon: Truck, labelKey: "nav.suppliers", module: "suppliers" },
+      { to: "/suppliers", icon: Building2, labelKey: "nav.suppliers", module: "suppliers" },
       { to: "/material-orders", icon: Package, labelKey: "nav.materialOrders", module: "material-orders" },
+      { to: "/material-reception", icon: ScanBarcode, labelKey: "nav.materialReception", module: "material-reception" },
       { to: "/vehicles", icon: Truck, labelKey: "nav.vehicles", module: "vehicles" },
     ],
   },
@@ -84,7 +98,8 @@ const navGroupsTail: NavGroup[] = [
 ];
 
 function getNavGroups(role: UserRole | null): NavGroup[] {
-  const financeChildren = role === "finance" ? financeNavSplit : [financeNavSingle];
+  const financeChildren =
+    role === "finance" ? financeNavSplit : role === "procurement" ? [procurementFinanceItem] : [financeNavSingle];
   return [
     {
       id: "sales-finance",
@@ -97,13 +112,15 @@ function getNavGroups(role: UserRole | null): NavGroup[] {
 }
 
 function getAllNavItems(role: UserRole | null): NavItem[] {
-  const financeItems = role === "finance" ? financeNavSplit : [financeNavSingle];
+  const financeItems =
+    role === "finance" ? financeNavSplit : role === "procurement" ? [procurementFinanceItem] : [financeNavSingle];
   return [
     { to: "/", icon: LayoutDashboard, labelKey: "nav.dashboard", module: "dashboard" },
     ...salesFinanceBaseChildren,
     ...financeItems,
     { to: "/material-orders", icon: Package, labelKey: "nav.materialOrders", module: "material-orders" },
-    { to: "/suppliers", icon: Truck, labelKey: "nav.suppliers", module: "suppliers" },
+    { to: "/material-reception", icon: ScanBarcode, labelKey: "nav.materialReception", module: "material-reception" },
+    { to: "/suppliers", icon: Building2, labelKey: "nav.suppliers", module: "suppliers" },
     { to: "/vehicles", icon: Truck, labelKey: "nav.vehicles", module: "vehicles" },
     { to: "/workers", icon: Users, labelKey: "nav.workers", module: "workers" },
     { to: "/work-orders", icon: ClipboardList, labelKey: "nav.workOrders", module: "work-orders" },
@@ -135,188 +152,240 @@ function isRouteActive(pathname: string, search: string, to: string): boolean {
   return true;
 }
 
+const sidebarNavLinkClass = (isActive: boolean, showLabel: boolean) =>
+  cn(
+    "flex items-center rounded-lg font-medium transition-colors",
+    showLabel ? "gap-3 px-3 py-2.5 text-[0.95rem] leading-snug" : "justify-center px-3 py-3 text-base",
+    isActive
+      ? "bg-primary/[0.09] text-primary dark:bg-sidebar-accent dark:text-sidebar-foreground"
+      : "text-sidebar-foreground hover:bg-sidebar-accent hover:text-sidebar-foreground",
+  );
+
+function SidebarNavLink({
+  item,
+  label,
+  isActive,
+  showLabel,
+  onNavigate,
+}: {
+  item: NavItem;
+  label: string;
+  isActive: boolean;
+  showLabel: boolean;
+  onNavigate: () => void;
+}) {
+  const link = (
+    <NavLink
+      to={item.to}
+      onClick={onNavigate}
+      className={sidebarNavLinkClass(isActive, showLabel)}
+    >
+      <item.icon className="w-5 h-5 shrink-0" aria-hidden />
+      {showLabel ? <span className="truncate">{label}</span> : null}
+    </NavLink>
+  );
+
+  if (showLabel) return link;
+
+  return (
+    <Tooltip delayDuration={0}>
+      <TooltipTrigger asChild>{link}</TooltipTrigger>
+      <TooltipContent side="right" align="center" className="font-medium">
+        {label}
+      </TooltipContent>
+    </Tooltip>
+  );
+}
+
+function FilesStorageSidebarBlock({ open: sidebarOpen }: { open: boolean }) {
+  const { currentRole } = useRole();
+  const enabled = currentRole === "admin";
+  const { data, isLoading, isError } = useFilesStorageUsage(enabled);
+  if (!enabled) return null;
+
+  const pct = data ? Math.min(100, data.percentFull) : 0;
+  const over = data ? data.usedBytes > data.quotaBytes : false;
+  const barColor = over || pct >= 95 ? "bg-destructive" : pct >= 75 ? "bg-amber-500" : "bg-primary";
+
+  return (
+    <div className="px-3 py-2.5 shrink-0 border-b border-sidebar-border/80">
+      {sidebarOpen ? (
+        <div className="space-y-1.5">
+          <div className="flex items-center justify-between gap-2">
+            <span className="flex items-center gap-1.5 text-sm font-medium text-sidebar-muted">
+              <HardDrive className="w-4 h-4 shrink-0" aria-hidden />
+              Skladište
+            </span>
+            {isLoading ? (
+              <span className="text-xs text-sidebar-muted">…</span>
+            ) : isError ? (
+              <span className="text-xs text-sidebar-muted">—</span>
+            ) : data ? (
+              <span
+                className={cn(
+                  "text-xs tabular-nums text-right max-w-[11rem] truncate",
+                  over ? "text-destructive font-medium" : "text-sidebar-muted",
+                )}
+                title={`${data.usedLabel} od ${data.quotaLabel}`}
+              >
+                {data.usedLabel} / {data.quotaLabel}
+              </span>
+            ) : null}
+          </div>
+          {!isLoading && !isError && data && (
+            <div
+              className="h-2 w-full rounded-full bg-sidebar-accent overflow-hidden"
+              title={`${Math.round(pct)}% kvote`}
+            >
+              <div className={cn("h-full rounded-full transition-all duration-300", barColor)} style={{ width: `${pct}%` }} />
+            </div>
+          )}
+          {!isLoading && !isError && data && over && (
+            <p className="text-xs text-destructive leading-snug">Zauzeto više od podešene kvote.</p>
+          )}
+        </div>
+      ) : (
+        <div
+          className="flex justify-center px-0.5"
+          title={data && !isLoading && !isError ? `${data.usedLabel} / ${data.quotaLabel}` : "Skladište"}
+        >
+          {!isLoading && !isError && data && (
+            <div className="h-1.5 w-9 rounded-full bg-sidebar-accent overflow-hidden">
+              <div className={cn("h-full rounded-full transition-all", barColor)} style={{ width: `${pct}%` }} />
+            </div>
+          )}
+        </div>
+      )}
+    </div>
+  );
+}
+
 export function AppSidebar({ open, mobileOpen, onMobileClose }: AppSidebarProps) {
   const location = useLocation();
   const locSearch = location.search;
   const { hasAccess, currentUserName, currentRole } = useRole();
   const { t } = useI18n();
-  const [expandedGroups, setExpandedGroups] = useState<Record<string, boolean>>({});
+  /** Pun meni (labele + grupe); mobilni drawer uvek, desktop samo kad je sidebar otvoren. */
+  const navExpanded = open || mobileOpen;
 
   const navGroups = useMemo(() => getNavGroups(currentRole), [currentRole]);
   const allNavItems = useMemo(() => getAllNavItems(currentRole), [currentRole]);
 
   const visibleItems = useMemo(
-    () => allNavItems.filter((item) => hasAccess(item.module)),
-    [allNavItems, hasAccess],
+    () => allNavItems.filter((item) => hasAccess(item.module) && !(currentRole === "procurement" && item.module === "material-reception")),
+    [allNavItems, currentRole, hasAccess],
   );
   const visibleDashboard = hasAccess(dashboardItem.module);
   const visibleSettings = hasAccess(settingsItem.module);
   const visibleGroups = useMemo(
     () =>
       navGroups
-        .map((group) => ({ ...group, children: group.children.filter((child) => hasAccess(child.module)) }))
+        .map((group) => ({
+          ...group,
+          children: group.children.filter(
+            (child) => hasAccess(child.module) && !(currentRole === "procurement" && child.module === "material-reception"),
+          ),
+        }))
         .filter((group) => group.children.length > 0),
-    [hasAccess, navGroups],
+    [currentRole, hasAccess, navGroups],
   );
-
-  const activeGroupIds = useMemo(() => {
-    return visibleGroups
-      .filter((group) =>
-        group.children.some((item) => isRouteActive(location.pathname, locSearch, item.to))
-      )
-      .map((group) => group.id);
-  }, [location.pathname, locSearch, visibleGroups]);
-
-  const toggleGroup = (groupId: string) => {
-    if (activeGroupIds.includes(groupId)) return;
-    setExpandedGroups((prev) => ({
-      ...prev,
-      [groupId]: !prev[groupId],
-    }));
-  };
 
   const sidebarContent = (
     <div className="flex flex-col h-full">
-      <div className="h-16 flex items-center gap-3 px-5 border-b border-sidebar-border shrink-0">
-        <div className="w-8 h-8 rounded-lg bg-primary flex items-center justify-center">
-          <Hammer className="w-4 h-4 text-primary-foreground" />
+      <div className="min-h-[4.25rem] flex min-w-0 items-center gap-3 px-4 border-b border-sidebar-border shrink-0 py-2">
+        <div
+          className={cn(
+            "flex shrink-0 items-center justify-center rounded-lg bg-white shadow-sm ring-1 ring-border/80 dark:bg-white dark:ring-white/20",
+            navExpanded ? "p-1.5" : "h-9 w-9 p-1",
+          )}
+        >
+          <img
+            src="/logo.png"
+            alt="Termoplast"
+            className={cn(
+              "object-contain",
+              navExpanded ? "h-8 w-auto max-h-8 max-w-[min(100%,10rem)]" : "h-7 w-7",
+            )}
+            width={220}
+            height={64}
+            decoding="async"
+          />
         </div>
-        {open && <span className="text-lg font-semibold text-sidebar-accent-foreground tracking-tight">Stolarija CRM</span>}
+        {navExpanded && (
+          <div className="min-w-0 flex-1 overflow-hidden text-ellipsis">
+            <TermoPlastCrmTitle className="text-lg" />
+          </div>
+        )}
       </div>
-      <nav className="flex-1 py-3 px-3 space-y-1 overflow-y-auto">
-        {open ? (
+      <nav className="flex-1 py-3.5 px-3 space-y-0.5 overflow-y-auto">
+        {navExpanded ? (
           <>
             {visibleDashboard && (
-              <div className="mb-3">
-                <p className="px-3 pb-2 text-xs font-medium uppercase tracking-[0.12em] text-sidebar-muted/90">
-                  Glavno
-                </p>
-                <NavLink
-                  to={dashboardItem.to}
-                  onClick={onMobileClose}
-                  className={cn(
-                    "flex items-center gap-3 px-3 py-2.5 rounded-lg text-[15px] font-semibold transition-colors border border-transparent",
-                    isRouteActive(location.pathname, locSearch, dashboardItem.to)
-                      ? "bg-sidebar-accent text-sidebar-primary border-sidebar-border/80 shadow-sm"
-                      : "text-sidebar-foreground hover:bg-sidebar-accent hover:text-sidebar-accent-foreground"
-                  )}
-                >
-                  <span className="flex h-6 w-6 shrink-0 items-center justify-center rounded-md bg-sidebar-accent/60">
-                    <dashboardItem.icon className="w-4 h-4 shrink-0" />
-                  </span>
-                  <span>{t(dashboardItem.labelKey)}</span>
-                </NavLink>
-              </div>
+              <SidebarNavLink
+                item={dashboardItem}
+                label={t(dashboardItem.labelKey)}
+                isActive={isRouteActive(location.pathname, locSearch, dashboardItem.to)}
+                showLabel
+                onNavigate={onMobileClose}
+              />
             )}
 
-            {visibleGroups.map((group) => {
-              const isGroupActive = activeGroupIds.includes(group.id);
-              const isExpanded = isGroupActive || !!expandedGroups[group.id];
-
-              return (
-                <div key={group.id} className="pt-0.5">
-                  <button
-                    type="button"
-                    onClick={() => toggleGroup(group.id)}
-                    className={cn(
-                      "w-full flex items-center justify-between gap-2 px-3 py-2.5 rounded-lg text-[15px] font-semibold transition-colors border border-transparent",
-                      "text-sidebar-foreground hover:bg-sidebar-accent hover:text-sidebar-accent-foreground"
-                    )}
-                  >
-                    <span className="flex items-center gap-2 min-w-0">
-                      <span className="flex h-6 w-6 shrink-0 items-center justify-center rounded-md bg-sidebar-accent/50">
-                        <group.icon className="w-4 h-4 shrink-0" />
-                      </span>
-                      <span className="truncate">{group.label}</span>
-                    </span>
-                    {!isExpanded && <ChevronDown className="w-4 h-4 shrink-0" />}
-                  </button>
-
-                  <div
-                    className={cn(
-                      "grid transition-all duration-200 ease-out",
-                      isExpanded ? "grid-rows-[1fr] opacity-100 mt-1" : "grid-rows-[0fr] opacity-0"
-                    )}
-                  >
-                    <div className="overflow-hidden space-y-0.5 pl-2.5 pr-1">
-                      {group.children.map((item) => {
-                        const isActive = isRouteActive(location.pathname, locSearch, item.to);
-                        return (
-                          <NavLink
-                            key={`${item.labelKey}-${item.to}`}
-                            to={item.to}
-                            onClick={onMobileClose}
-                            className={cn(
-                              "flex items-center gap-3 px-3 py-2 rounded-lg text-[14px] font-medium transition-colors",
-                              isActive
-                                ? "bg-sidebar-accent text-sidebar-primary shadow-sm"
-                                : "text-sidebar-foreground/90 hover:bg-sidebar-accent hover:text-sidebar-accent-foreground"
-                            )}
-                          >
-                            <item.icon className="w-[15px] h-[15px] shrink-0" />
-                            <span>{t(item.labelKey)}</span>
-                          </NavLink>
-                        );
-                      })}
-                    </div>
-                  </div>
+            {visibleGroups.map((group) => (
+              <section key={group.id} className="pt-2 first:pt-0.5" aria-label={group.label}>
+                <p className="flex items-center gap-2.5 px-3 pb-1.5 text-xs font-semibold uppercase tracking-[0.08em] text-sidebar-muted">
+                  <group.icon className="w-4 h-4 shrink-0" aria-hidden />
+                  <span className="truncate">{group.label}</span>
+                </p>
+                <div className="space-y-0.5">
+                  {group.children.map((item) => (
+                    <SidebarNavLink
+                      key={`${item.labelKey}-${item.to}`}
+                      item={item}
+                      label={t(item.labelKey)}
+                      isActive={isRouteActive(location.pathname, locSearch, item.to)}
+                      showLabel
+                      onNavigate={onMobileClose}
+                    />
+                  ))}
                 </div>
-              );
-            })}
+              </section>
+            ))}
 
             {visibleSettings && (
               <div className="pt-2 mt-2 border-t border-sidebar-border/80">
-                <p className="px-3 pb-2 text-xs font-medium uppercase tracking-[0.12em] text-sidebar-muted/90">
-                  Sistem
-                </p>
-                <NavLink
-                  to={settingsItem.to}
-                  onClick={onMobileClose}
-                  className={cn(
-                    "flex items-center gap-3 px-3 py-2.5 rounded-lg text-[15px] font-semibold transition-colors border border-transparent",
-                    location.pathname.startsWith(settingsItem.to)
-                      ? "bg-sidebar-accent text-sidebar-primary border-sidebar-border/80 shadow-sm"
-                      : "text-sidebar-foreground hover:bg-sidebar-accent hover:text-sidebar-accent-foreground"
-                  )}
-                >
-                  <span className="flex h-6 w-6 shrink-0 items-center justify-center rounded-md bg-sidebar-accent/60">
-                    <settingsItem.icon className="w-4 h-4 shrink-0" />
-                  </span>
-                  <span>{t(settingsItem.labelKey)}</span>
-                </NavLink>
+                <SidebarNavLink
+                  item={settingsItem}
+                  label={t(settingsItem.labelKey)}
+                  isActive={location.pathname.startsWith(settingsItem.to)}
+                  showLabel
+                  onNavigate={onMobileClose}
+                />
               </div>
             )}
           </>
         ) : (
-          visibleItems.map((item) => {
-            const isActive = isRouteActive(location.pathname, locSearch, item.to);
-            return (
-              <NavLink
-                key={`${item.labelKey}-${item.to}`}
-                to={item.to}
-                onClick={onMobileClose}
-                className={cn(
-                  "flex items-center gap-3 px-3 py-2.5 rounded-lg text-sm font-medium transition-colors",
-                  isActive
-                    ? "bg-sidebar-accent text-sidebar-primary"
-                    : "text-sidebar-foreground hover:bg-sidebar-accent hover:text-sidebar-accent-foreground"
-                )}
-              >
-                <item.icon className="w-5 h-5 shrink-0" />
-              </NavLink>
-            );
-          })
+          visibleItems.map((item) => (
+            <SidebarNavLink
+              key={`${item.labelKey}-${item.to}`}
+              item={item}
+              label={t(item.labelKey)}
+              isActive={isRouteActive(location.pathname, locSearch, item.to)}
+              showLabel={false}
+              onNavigate={onMobileClose}
+            />
+          ))
         )}
       </nav>
+      <FilesStorageSidebarBlock open={navExpanded} />
       <div className="p-4 border-t border-sidebar-border shrink-0">
-        {open && (
+        {navExpanded && (
           <div className="flex items-center gap-3">
-            <div className="w-8 h-8 rounded-full bg-sidebar-accent flex items-center justify-center text-xs font-semibold text-sidebar-accent-foreground">
+            <div className="w-10 h-10 rounded-full bg-sidebar-accent flex items-center justify-center text-sm font-semibold text-sidebar-accent-foreground">
               {currentUserName.split(" ").map(n => n[0]).join("")}
             </div>
             <div className="min-w-0">
-              <p className="text-sm font-medium text-sidebar-accent-foreground truncate">{currentUserName}</p>
-              <p className="text-xs text-sidebar-muted truncate">
+              <p className="text-base font-medium text-sidebar-foreground truncate">{currentUserName}</p>
+              <p className="text-sm text-sidebar-muted truncate">
                 {currentRole ? (ROLE_CONFIG[currentRole as UserRole]?.label ?? currentRole) : ""}
               </p>
             </div>
@@ -331,7 +400,7 @@ export function AppSidebar({ open, mobileOpen, onMobileClose }: AppSidebarProps)
       <aside
         className={cn(
           "hidden lg:flex flex-col bg-sidebar border-r border-sidebar-border shrink-0 transition-all duration-200",
-          open ? "w-64" : "w-16"
+          open ? "w-72" : "w-[4.5rem]"
         )}
       >
         {sidebarContent}
@@ -340,7 +409,7 @@ export function AppSidebar({ open, mobileOpen, onMobileClose }: AppSidebarProps)
       {mobileOpen && (
         <div className="fixed inset-0 z-50 lg:hidden">
           <div className="absolute inset-0 bg-foreground/50" onClick={onMobileClose} />
-          <aside className="absolute inset-y-0 left-0 w-72 bg-sidebar flex flex-col shadow-xl">
+          <aside className="absolute inset-y-0 left-0 w-[85vw] max-w-[20rem] bg-sidebar flex flex-col shadow-xl">
             <button onClick={onMobileClose} className="absolute top-4 right-4 text-sidebar-foreground hover:text-sidebar-accent-foreground">
               <X className="w-5 h-5" />
             </button>

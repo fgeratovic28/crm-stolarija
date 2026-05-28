@@ -1,5 +1,5 @@
 import { useState } from "react";
-import { Truck, Plus, Search, Edit2, Trash2, Mail, Phone, MapPin, CheckCircle2, XCircle } from "lucide-react";
+import { Truck, Plus, Search, Edit2, Trash2, Mail, Phone, MapPin, CheckCircle2, XCircle, Tag } from "lucide-react";
 import { AppLayout } from "@/components/layout/AppLayout";
 import { PageHeader } from "@/components/shared/PageHeader";
 import { Breadcrumbs } from "@/components/shared/Breadcrumbs";
@@ -11,9 +11,11 @@ import { useSuppliers } from "@/hooks/use-suppliers";
 import { useRole } from "@/contexts/RoleContext";
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { SupplierForm } from "@/components/shared/SupplierForm";
+import { ConfirmDialog } from "@/components/shared/ConfirmDialog";
 import { GenericBadge } from "@/components/shared/StatusBadge";
 import type { Supplier } from "@/types";
 import type { SupplierFormValues } from "@/components/shared/SupplierForm";
+import { labelSupplierCategoryForDisplay } from "@/lib/supplier-category-display";
 
 export default function SuppliersPage() {
   const { suppliers, isLoading, createSupplier, updateSupplier, deleteSupplier } = useSuppliers();
@@ -24,8 +26,11 @@ export default function SuppliersPage() {
 
   const filtered = suppliers?.filter(s => 
     s.name.toLowerCase().includes(searchTerm.toLowerCase()) ||
-    s.contactPerson.toLowerCase().includes(searchTerm.toLowerCase()) ||
-    s.email.toLowerCase().includes(searchTerm.toLowerCase())
+    (s.contactPerson ?? "").toLowerCase().includes(searchTerm.toLowerCase()) ||
+    (s.email ?? "").toLowerCase().includes(searchTerm.toLowerCase())
+  );
+  const categorySuggestions = Array.from(
+    new Set((suppliers ?? []).map((s) => s.category?.trim()).filter((v): v is string => Boolean(v && v.length > 0))),
   );
 
   const handleCreate = (data: SupplierFormValues) => {
@@ -46,9 +51,7 @@ export default function SuppliersPage() {
   };
 
   const handleDelete = (id: string) => {
-    if (confirm("Da li ste sigurni da želite da obrišete ovog dobavljača?")) {
-      deleteSupplier.mutate(id);
-    }
+    deleteSupplier.mutate(id);
   };
 
   const openEdit = (supplier: Supplier) => {
@@ -98,22 +101,30 @@ export default function SuppliersPage() {
             {filtered?.map((supplier) => (
               <div key={supplier.id} className="bg-card rounded-xl border border-border p-5 hover:shadow-md transition-shadow">
                 <div className="flex justify-between items-start mb-4">
-                  <div>
-                    <h3 className="font-semibold text-lg">{supplier.name}</h3>
-                    <p className="text-sm text-muted-foreground">{supplier.contactPerson}</p>
-                  </div>
-                  <div className="flex items-center gap-1.5">
-                    {supplier.active ? (
-                      <CheckCircle2 className="w-4 h-4 text-success" />
-                    ) : (
-                      <XCircle className="w-4 h-4 text-destructive" />
-                    )}
-                    <GenericBadge 
-                      label={supplier.active ? "Aktivan" : "Neaktivan"} 
-                      variant={supplier.active ? "success" : "muted"} 
-                    />
-                  </div>
-                </div>
+                   <div>
+                     <h3 className="font-semibold text-lg">{supplier.name}</h3>
+                     <p className="text-sm text-muted-foreground">{supplier.contactPerson}</p>
+                     {supplier.category && (
+                       <div className="flex items-center gap-1.5 mt-1">
+                         <Tag className="w-3 h-3 text-muted-foreground" />
+                         <span className="text-xs font-medium text-muted-foreground">
+                           {labelSupplierCategoryForDisplay(supplier.category)}
+                         </span>
+                       </div>
+                     )}
+                   </div>
+                   <div className="flex items-center gap-1.5">
+                     {supplier.active ? (
+                       <CheckCircle2 className="w-4 h-4 text-success" />
+                     ) : (
+                       <XCircle className="w-4 h-4 text-destructive" />
+                     )}
+                     <GenericBadge
+                       label={supplier.active ? "Aktivan" : "Neaktivan"}
+                       variant={supplier.active ? "success" : "muted"}
+                     />
+                   </div>
+                 </div>
 
                 <div className="space-y-2 mb-6">
                   <div className="flex items-center gap-2 text-sm text-muted-foreground">
@@ -136,9 +147,18 @@ export default function SuppliersPage() {
                       <Button variant="outline" size="sm" onClick={() => openEdit(supplier)}>
                         <Edit2 className="w-3.5 h-3.5 mr-1.5" /> Izmeni
                       </Button>
-                      <Button variant="ghost" size="sm" className="text-destructive hover:text-destructive hover:bg-destructive/10" onClick={() => handleDelete(supplier.id)}>
-                        <Trash2 className="w-3.5 h-3.5" />
-                      </Button>
+                      <ConfirmDialog
+                        title="Obrisati dobavljača?"
+                        description={`Da li ste sigurni da želite da obrišete dobavljača "${supplier.name}"? Ova akcija je nepovratna.`}
+                        confirmLabel="Obriši"
+                        cancelLabel="Otkaži"
+                        onConfirm={() => handleDelete(supplier.id)}
+                        trigger={
+                          <Button variant="ghost" size="sm" className="text-destructive hover:text-destructive hover:bg-destructive/10">
+                            <Trash2 className="w-3.5 h-3.5" />
+                          </Button>
+                        }
+                      />
                     </>
                   )}
                 </div>
@@ -155,6 +175,7 @@ export default function SuppliersPage() {
             <SupplierForm
               key={isModalOpen ? (editingSupplier?.id ?? "new") : "closed"}
               initialData={editingSupplier || {}}
+              categorySuggestions={categorySuggestions}
               onSubmit={editingSupplier ? handleUpdate : handleCreate}
               onCancel={() => setIsModalOpen(false)}
               isLoading={createSupplier.isPending || updateSupplier.isPending}

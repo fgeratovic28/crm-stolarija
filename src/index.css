@@ -1,31 +1,30 @@
-@import url('https://fonts.googleapis.com/css2?family=DM+Sans:ital,opsz,wght@0,9..40,300;0,9..40,400;0,9..40,500;0,9..40,600;0,9..40,700;1,9..40,400&display=swap');
-
 @tailwind base;
 @tailwind components;
 @tailwind utilities;
 
 @layer base {
   :root {
-    --background: 0 0% 97%;
-    --foreground: 220 20% 14%;
+    /* Svetla, hladna osnova — Termoplast navy / crvena */
+    --background: 60 4.8% 95.9%;
+    --foreground: 218 44% 15%;
 
     --card: 0 0% 100%;
-    --card-foreground: 220 20% 14%;
+    --card-foreground: 218 44% 15%;
 
     --popover: 0 0% 100%;
-    --popover-foreground: 220 20% 14%;
+    --popover-foreground: 218 44% 15%;
 
-    --primary: 25 95% 50%;
+    --primary: 218 73% 16%;
     --primary-foreground: 0 0% 100%;
 
-    --secondary: 220 14% 96%;
-    --secondary-foreground: 220 20% 14%;
+    --secondary: 217 28% 93%;
+    --secondary-foreground: 218 60% 18%;
 
-    --muted: 220 14% 96%;
-    --muted-foreground: 220 10% 46%;
+    --muted: 220 18% 95%;
+    --muted-foreground: 218 18% 38%;
 
-    --accent: 220 14% 93%;
-    --accent-foreground: 220 20% 14%;
+    --accent: 350 78% 40%;
+    --accent-foreground: 0 0% 100%;
 
     --destructive: 0 72% 51%;
     --destructive-foreground: 0 0% 100%;
@@ -39,29 +38,133 @@
     --info: 210 92% 45%;
     --info-foreground: 0 0% 100%;
 
-    --border: 220 13% 91%;
-    --input: 220 13% 91%;
-    --ring: 25 95% 50%;
+    --border: 217 16% 88%;
+    --input: 217 16% 88%;
+    --ring: 218 60% 38%;
 
     --radius: 0.5rem;
 
-    --sidebar-background: 220 20% 14%;
-    --sidebar-foreground: 220 14% 80%;
-    --sidebar-primary: 25 95% 50%;
+    --sidebar-background: 60 4.8% 95.9%;
+    --sidebar-foreground: 218 50% 16%;
+    --sidebar-primary: 218 73% 16%;
     --sidebar-primary-foreground: 0 0% 100%;
-    --sidebar-accent: 220 18% 20%;
-    --sidebar-accent-foreground: 220 14% 90%;
-    --sidebar-border: 220 18% 22%;
-    --sidebar-ring: 25 95% 50%;
-    --sidebar-muted: 220 14% 40%;
+    --sidebar-accent: 217 22% 92%;
+    --sidebar-accent-foreground: 218 48% 14%;
+    --sidebar-border: 217 16% 88%;
+    --sidebar-ring: 350 72% 48%;
+    --sidebar-muted: 218 14% 40%;
+  }
+
+  .dark {
+    /* Tamna tema: slojevi (pozadina / kartica), smiren kontrast, accent = diskretan hover (ne crveni „splash“) */
+    --background: 222 22% 8%;
+    --foreground: 210 18% 94%;
+
+    --card: 218 14% 16%;
+    --card-foreground: 210 18% 94%;
+
+    --popover: 218 14% 15%;
+    --popover-foreground: 210 18% 94%;
+
+    --primary: 218 50% 52%;
+    --primary-foreground: 0 0% 100%;
+
+    --secondary: 218 14% 16%;
+    --secondary-foreground: 210 16% 92%;
+
+    --muted: 220 12% 11%;
+    --muted-foreground: 215 10% 62%;
+
+    --accent: 218 14% 18%;
+    --accent-foreground: 210 18% 94%;
+
+    --destructive: 0 55% 44%;
+    --destructive-foreground: 0 0% 100%;
+
+    --success: 142 45% 36%;
+    --success-foreground: 0 0% 100%;
+
+    --warning: 38 82% 50%;
+    --warning-foreground: 222 22% 10%;
+
+    --info: 210 55% 50%;
+    --info-foreground: 0 0% 100%;
+
+    --border: 220 9% 22%;
+    --input: 220 9% 20%;
+    --ring: 218 38% 46%;
+
+    --sidebar-background: 222 24% 6.5%;
+    --sidebar-foreground: 210 18% 92%;
+    --sidebar-primary: 218 50% 54%;
+    --sidebar-primary-foreground: 0 0% 100%;
+    --sidebar-accent: 218 14% 13%;
+    --sidebar-accent-foreground: 210 18% 93%;
+    --sidebar-border: 220 8% 20%;
+    --sidebar-ring: 218 40% 48%;
+    --sidebar-muted: 215 10% 52%;
+
+    color-scheme: dark;
+    scrollbar-color: hsl(var(--muted-foreground) / 0.28) hsl(var(--muted) / 0.45);
+  }
+
+  .dark *::-webkit-scrollbar {
+    width: 9px;
+    height: 9px;
+  }
+
+  .dark *::-webkit-scrollbar-track {
+    background: hsl(var(--muted) / 0.45);
+    border-radius: 9999px;
+  }
+
+  .dark *::-webkit-scrollbar-thumb {
+    background: hsl(var(--muted-foreground) / 0.28);
+    border-radius: 9999px;
+    border: 2px solid transparent;
+    background-clip: padding-box;
+  }
+
+  .dark *::-webkit-scrollbar-thumb:hover {
+    background: hsl(var(--muted-foreground) / 0.42);
+    border: 2px solid transparent;
+    background-clip: padding-box;
+  }
+
+  body {
+    @apply bg-background text-foreground antialiased;
+    text-rendering: optimizeLegibility;
   }
 }
 
-@layer base {
-  * {
-    @apply border-border;
+@layer utilities {
+  @keyframes scan-line {
+    0% { top: 0%; }
+    100% { top: 100%; }
   }
-  body {
-    @apply bg-background text-foreground font-sans font-medium antialiased;
+  .animate-scan-line {
+    animation: scan-line 2s linear infinite;
   }
+}
+
+/* Tamna tema: Leaflet popup na mapi završenih poslova (bez belog „okvira“) */
+.dark .completed-jobs-map .leaflet-popup-content-wrapper {
+  background: hsl(var(--card));
+  color: hsl(var(--card-foreground));
+  border: 1px solid hsl(var(--border) / 0.55);
+  border-radius: var(--radius);
+  box-shadow: 0 10px 28px rgb(0 0 0 / 0.45);
+}
+
+.dark .completed-jobs-map .leaflet-popup-tip {
+  background: hsl(var(--card));
+  box-shadow: none;
+}
+
+.dark .completed-jobs-map a.leaflet-popup-close-button {
+  color: hsl(var(--muted-foreground));
+}
+
+.dark .completed-jobs-map a.leaflet-popup-close-button:hover {
+  color: hsl(var(--foreground));
 }

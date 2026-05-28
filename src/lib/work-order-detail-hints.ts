@@ -1,5 +1,11 @@
 import type { WorkOrderType } from "@/types";
 
+/** RN bez prikaza obima posla, procene ugradnje i ponude — samo obilazak. */
+export function isLightweightFieldVisitWorkOrderType(type: WorkOrderType | undefined | null): boolean {
+  if (!type) return false;
+  return type === "complaint" || type === "service" || type === "site_visit";
+}
+
 /** Kratak kontekst za koga je zadatak (sve uloge — pregled naloga). */
 export function workOrderTypeDetailHint(type: WorkOrderType): string {
   switch (type) {
@@ -12,9 +18,7 @@ export function workOrderTypeDetailHint(type: WorkOrderType): string {
     case "installation":
       return "Montaža na lokaciji klijenta — koristite adresu, kontakt i procenu trajanja.";
     case "complaint":
-      return "Teren — reklamacija; proverite istoriju posla i priloge.";
     case "service":
-      return "Teren ili servis — održavanje ili korekcija po dogovoru.";
     case "site_visit":
       return "Teren — obilazak lokacije (bez ugradnje).";
     case "control_visit":

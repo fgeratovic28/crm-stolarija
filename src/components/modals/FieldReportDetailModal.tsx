@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useMemo, useState } from "react";
 import { useQueryClient } from "@tanstack/react-query";
 import {
   MapPin,
@@ -20,11 +20,17 @@ import { GenericBadge } from "@/components/shared/StatusBadge";
 import { ImageLightbox } from "@/components/shared/ImageLightbox";
 import { Separator } from "@/components/ui/separator";
 import { formatDateByAppLanguage, formatDateTimeBySettings } from "@/lib/app-settings";
+import { invalidateFilesStorageUsage } from "@/lib/files-storage-usage";
 import { exportFieldReportPDF } from "@/lib/export-documents";
 import { useAuthStore } from "@/stores/auth-store";
 import { toast } from "sonner";
 import type { FieldReport, WorkOrderType } from "@/types";
 import { fieldReportFlowForWorkOrderType } from "@/lib/field-team-access";
+import {
+  displayFieldReportMissingItem,
+  formatAssignedTeamLabel,
+} from "@/lib/field-report-mappers";
+import { useTeams } from "@/hooks/use-teams";
 
 interface FieldReportDetailModalProps {
   report: FieldReport | null;
@@ -36,6 +42,11 @@ export function FieldReportDetailModal({ report, open, onOpenChange }: FieldRepo
   const [lightboxSrc, setLightboxSrc] = useState<string | null>(null);
   const { user } = useAuthStore();
   const queryClient = useQueryClient();
+  const { teams } = useTeams();
+  const teamNameById = useMemo(
+    () => new Map((teams ?? []).map((t) => [t.id, t.name])),
+    [teams],
+  );
 
   if (!report) return null;
 
@@ -64,9 +75,22 @@ export function FieldReportDetailModal({ report, open, onOpenChange }: FieldRepo
         <div className="space-y-5 pt-2">
           {/* Location & Job */}
           <div className="space-y-2">
-            <p className="text-sm font-medium text-foreground">{report.address}</p>
+            {!isProductionReport ? (
+              <p className="text-sm font-medium text-foreground">{report.address}</p>
+            ) : null}
             {relatedJob && (
-              <p className="text-xs text-muted-foreground">Posao: <span className="text-primary font-medium">{relatedJob.jobNumber}</span> — {relatedJob.customer.fullName}</p>
+              <p className="text-xs text-muted-foreground">
+                Posao: <span className="text-primary font-medium">{relatedJob.jobNumber}</span> —{" "}
+                {relatedJob.customer.fullName}
+              </p>
+            )}
+            {(report.workOrderId || report.workOrderType) && (
+              <p className="text-xs text-muted-foreground">
+                Tim (radni nalog):{" "}
+                <span className="font-medium text-foreground">
+                  {formatAssignedTeamLabel(report.teamId, teamNameById)}
+                </span>
+              </p>
             )}
           </div>
 
@@ -76,53 +100,59 @@ export function FieldReportDetailModal({ report, open, onOpenChange }: FieldRepo
               label={report.jobCompleted ? (isProductionReport ? "Proizvodnja završena" : "Gotov") : "Nije gotov"}
               variant={report.jobCompleted ? "success" : "warning"}
             />
-            <GenericBadge label={report.everythingOk ? "Sve bilo u redu" : "Nije sve u redu"} variant={report.everythingOk ? "success" : "danger"} />
-            {!isProductionReport && report.siteCanceled && <GenericBadge label="Teren otkazan" variant="danger" />}
+            {!isProductionReport ? (
+              <>
+                <GenericBadge label={report.everythingOk ? "Sve bilo u redu" : "Nije sve u redu"} variant={report.everythingOk ? "success" : "danger"} />
+                {report.siteCanceled && <GenericBadge label="Teren otkazan" variant="danger" />}
+              </>
+            ) : null}
           </div>
 
-          <Separator />
+          {!isProductionReport ? <Separator /> : null}
 
           {/* Dates */}
-          <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-            {(report.details?.arrivedAt || report.arrivalDate) && !isProductionReport && (
-              <div className="space-y-1">
-                <p className="text-xs font-medium text-muted-foreground flex items-center gap-1.5"><Calendar className="w-3.5 h-3.5" />Stigao na teren (zabeleženo)</p>
-                <p className="text-sm text-foreground">
-                  {formatDateTimeBySettings(report.details?.arrivedAt ?? report.arrivalDate ?? "")}
-                </p>
-              </div>
-            )}
-            {report.details?.canceledAt && (
-              <div className="space-y-1">
-                <p className="text-xs font-medium text-muted-foreground flex items-center gap-1.5"><XCircle className="w-3.5 h-3.5" />Otkazivanje</p>
-                <p className="text-sm text-foreground">{formatDateTimeBySettings(report.details.canceledAt)}</p>
-              </div>
-            )}
-            {report.details?.finishedAt && (
-              <div className="space-y-1">
-                <p className="text-xs font-medium text-muted-foreground flex items-center gap-1.5"><CheckCircle className="w-3.5 h-3.5" />Gotov</p>
-                <p className="text-sm text-foreground">{formatDateTimeBySettings(report.details.finishedAt)}</p>
-              </div>
-            )}
-            {report.details?.issueReportedAt && (
-              <div className="space-y-1">
-                <p className="text-xs font-medium text-muted-foreground flex items-center gap-1.5"><AlertTriangle className="w-3.5 h-3.5" />Prijava problema</p>
-                <p className="text-sm text-foreground">{formatDateTimeBySettings(report.details.issueReportedAt)}</p>
-              </div>
-            )}
-            {report.details?.additionalReqAt && (
-              <div className="space-y-1">
-                <p className="text-xs font-medium text-muted-foreground flex items-center gap-1.5"><Package className="w-3.5 h-3.5" />Dodatni zahtev</p>
-                <p className="text-sm text-foreground">{formatDateTimeBySettings(report.details.additionalReqAt)}</p>
-              </div>
-            )}
-            {report.handoverDate && (
-              <div className="space-y-1">
-                <p className="text-xs font-medium text-muted-foreground flex items-center gap-1.5"><CheckCircle className="w-3.5 h-3.5" />Datum primopredaje</p>
-                <p className="text-sm text-foreground">{formatDateByAppLanguage(report.handoverDate)}</p>
-              </div>
-            )}
-          </div>
+          {!isProductionReport ? (
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+              {(report.details?.arrivedAt || report.arrivalDate) && (
+                <div className="space-y-1">
+                  <p className="text-xs font-medium text-muted-foreground flex items-center gap-1.5"><Calendar className="w-3.5 h-3.5" />Stigao na teren (zabeleženo)</p>
+                  <p className="text-sm text-foreground">
+                    {formatDateTimeBySettings(report.details?.arrivedAt ?? report.arrivalDate ?? "")}
+                  </p>
+                </div>
+              )}
+              {report.details?.canceledAt && (
+                <div className="space-y-1">
+                  <p className="text-xs font-medium text-muted-foreground flex items-center gap-1.5"><XCircle className="w-3.5 h-3.5" />Otkazivanje</p>
+                  <p className="text-sm text-foreground">{formatDateTimeBySettings(report.details.canceledAt)}</p>
+                </div>
+              )}
+              {report.details?.finishedAt && (
+                <div className="space-y-1">
+                  <p className="text-xs font-medium text-muted-foreground flex items-center gap-1.5"><CheckCircle className="w-3.5 h-3.5" />Završen radni nalog</p>
+                  <p className="text-sm text-foreground">{formatDateTimeBySettings(report.details.finishedAt)}</p>
+                </div>
+              )}
+              {report.details?.issueReportedAt && (
+                <div className="space-y-1">
+                  <p className="text-xs font-medium text-muted-foreground flex items-center gap-1.5"><AlertTriangle className="w-3.5 h-3.5" />Prijava problema</p>
+                  <p className="text-sm text-foreground">{formatDateTimeBySettings(report.details.issueReportedAt)}</p>
+                </div>
+              )}
+              {report.details?.additionalReqAt && (
+                <div className="space-y-1">
+                  <p className="text-xs font-medium text-muted-foreground flex items-center gap-1.5"><Package className="w-3.5 h-3.5" />Dodatni zahtev</p>
+                  <p className="text-sm text-foreground">{formatDateTimeBySettings(report.details.additionalReqAt)}</p>
+                </div>
+              )}
+              {report.handoverDate && (
+                <div className="space-y-1">
+                  <p className="text-xs font-medium text-muted-foreground flex items-center gap-1.5"><CheckCircle className="w-3.5 h-3.5" />Datum primopredaje</p>
+                  <p className="text-sm text-foreground">{formatDateByAppLanguage(report.handoverDate)}</p>
+                </div>
+              )}
+            </div>
+          ) : null}
 
           {report.workOrderType === "measurement" &&
             report.estimatedInstallationHours != null &&
@@ -147,7 +177,7 @@ export function FieldReportDetailModal({ report, open, onOpenChange }: FieldRepo
           )}
 
           {/* Issues */}
-          {report.issueDescription && (
+          {!isProductionReport && report.issueDescription && (
             <div className="bg-destructive/5 border border-destructive/20 rounded-lg p-3">
               <div className="flex items-center gap-2 text-sm font-medium text-destructive mb-1">
                 <AlertTriangle className="w-4 h-4" /> Pronađeni problemi
@@ -157,10 +187,10 @@ export function FieldReportDetailModal({ report, open, onOpenChange }: FieldRepo
           )}
 
           {/* Measurements */}
-          {report.measurements && (
+          {!isProductionReport && report.measurements && (
             <div className="space-y-1">
               <p className="text-xs font-medium text-muted-foreground flex items-center gap-1.5"><Ruler className="w-3.5 h-3.5" />Mere</p>
-              <p className="text-sm text-foreground bg-muted/50 rounded-lg p-3">{report.measurements}</p>
+              <p className="text-sm text-foreground bg-muted/50 rounded-lg p-3 whitespace-pre-wrap">{report.measurements}</p>
             </div>
           )}
 
@@ -173,19 +203,21 @@ export function FieldReportDetailModal({ report, open, onOpenChange }: FieldRepo
           )}
 
           {/* Missing items */}
-          {report.missingItems.length > 0 && (
+          {!isProductionReport && report.missingItems.length > 0 && (
             <div className="space-y-1.5">
               <p className="text-xs font-medium text-muted-foreground flex items-center gap-1.5"><Package className="w-3.5 h-3.5" />Nedostajući delovi</p>
               <div className="flex flex-wrap gap-1.5">
                 {report.missingItems.map((item, i) => (
-                  <span key={i} className="text-xs bg-destructive/10 text-destructive px-2.5 py-1 rounded-full font-medium">{item}</span>
+                  <span key={i} className="text-xs bg-destructive/10 text-destructive px-2.5 py-1 rounded-full font-medium">
+                    {displayFieldReportMissingItem(item)}
+                  </span>
                 ))}
               </div>
             </div>
           )}
 
           {/* Additional needs */}
-          {report.additionalNeeds.length > 0 && (
+          {!isProductionReport && report.additionalNeeds.length > 0 && (
             <div className="space-y-1.5">
               <p className="text-xs font-medium text-muted-foreground">Dodatne potrebe</p>
               <ul className="space-y-1">
@@ -256,8 +288,10 @@ export function FieldReportDetailModal({ report, open, onOpenChange }: FieldRepo
                 userId: user?.id,
                 onPdfAttached: (r) => {
                   if (report.jobId) {
-                    queryClient.invalidateQueries({ queryKey: ["files", report.jobId] });
+                    void queryClient.invalidateQueries({ queryKey: ["files", report.jobId] });
                   }
+                  void queryClient.invalidateQueries({ queryKey: ["files", "all"] });
+                  invalidateFilesStorageUsage(queryClient);
                   toast.success(r === "updated" ? "PDF je ažuriran u Fajlovima" : "PDF je sačuvan u Fajlovima");
                 },
                 onPdfAttachFailed: (m) =>

@@ -1,15 +1,20 @@
 import { useState, useEffect, useMemo, useCallback } from "react";
 import { useNavigate, useLocation } from "react-router-dom";
-import { Hammer, Eye, EyeOff, Loader2 } from "lucide-react";
+import { Eye, EyeOff, Loader2 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { AppSessionLoadingScreen } from "@/components/AppSessionLoadingScreen";
-import { AuthHydratingFallback } from "@/components/AuthHydratingFallback";
-import { hasRichSplashCompleted } from "@/lib/rich-splash-session";
+import {
+  hasRichSplashCompleted,
+  markEntrySplashShownThisPageLoad,
+  markRichSplashCompleted,
+} from "@/lib/rich-splash-session";
 import { supabase } from "@/lib/supabase";
 import { useToast } from "@/hooks/use-toast";
 import { useAuthStore } from "@/stores/auth-store";
+import { TermoPlastCrmTitle } from "@/components/shared/TermoPlastCrmTitle";
+import { ThemeToggle } from "@/components/layout/ThemeToggle";
 
 export default function LoginPage() {
   const [fullName, setFullName] = useState("");
@@ -23,7 +28,11 @@ export default function LoginPage() {
   const location = useLocation();
   const { isAuthenticated, user, isPendingApproval, authReady, authProfileReady } = useAuthStore();
   const [bootScreenDone, setBootScreenDone] = useState(() => hasRichSplashCompleted());
-  const onBootScreenComplete = useCallback(() => setBootScreenDone(true), []);
+  const onBootScreenComplete = useCallback(() => {
+    markRichSplashCompleted();
+    markEntrySplashShownThisPageLoad();
+    setBootScreenDone(true);
+  }, []);
 
   const redirectAfterLogin = useMemo(() => {
     const from = (location.state as { from?: { pathname?: string } } | null)?.from?.pathname;
@@ -38,7 +47,7 @@ export default function LoginPage() {
   }, [location.state]);
 
   useEffect(() => {
-    document.title = isRegistering ? "Registracija | CRM Stolarija" : "Prijava | CRM Stolarija";
+    document.title = isRegistering ? "Registracija | Termo Plast CRM" : "Prijava | Termo Plast CRM";
     if (isAuthenticated && authProfileReady && isPendingApproval) {
       navigate("/pending-approval", { replace: true });
       return;
@@ -140,30 +149,43 @@ export default function LoginPage() {
     return (
       <AppSessionLoadingScreen
         sessionReady={authReady}
+        variant="boot"
         onReadyVisualComplete={onBootScreenComplete}
       />
     );
   }
 
   if (!authReady) {
-    return <AuthHydratingFallback />;
+    return <AppSessionLoadingScreen sessionReady={false} appearance="spinner" />;
   }
 
   if (isAuthenticated && !authProfileReady) {
-    return <AuthHydratingFallback />;
+    return <AppSessionLoadingScreen sessionReady={false} appearance="spinner" />;
   }
 
   return (
-    <div className="min-h-screen flex items-center justify-center bg-background p-4">
+    <div className="min-h-screen flex items-center justify-center bg-background p-4 relative">
+      <div className="absolute right-3 top-3 sm:right-5 sm:top-5 z-10">
+        <ThemeToggle />
+      </div>
       <div className="w-full max-w-sm">
-        <div className="bg-card rounded-2xl border border-border shadow-sm p-8">
+        <div className="bg-card rounded-2xl border border-border shadow-sm p-8 sm:p-10">
           <div className="flex flex-col items-center mb-8">
-            <div className="w-14 h-14 rounded-2xl bg-primary flex items-center justify-center mb-4">
-              <Hammer className="w-7 h-7 text-primary-foreground" />
+            <div className="mb-5 flex justify-center px-1">
+              <div className="rounded-xl bg-white p-2 shadow-sm ring-1 ring-border/80 dark:bg-white dark:ring-white/20">
+                <img
+                  src="/logo.png"
+                  alt="Termoplast"
+                  className="h-[4.5rem] w-auto max-w-full object-contain"
+                  width={280}
+                  height={80}
+                  decoding="async"
+                />
+              </div>
             </div>
             {isAuthenticated && user && authProfileReady && !isPendingApproval && !cameFromProtectedRoute && (
               <div className="w-full mb-6 p-4 rounded-xl border border-border bg-muted/40 text-left space-y-3">
-                <p className="text-sm text-muted-foreground">
+                <p className="text-base text-muted-foreground leading-relaxed">
                   Već ste prijavljeni (sesija je deljena između kartica u istom pregledaču). Možete otvoriti
                   aplikaciju ili se ispod prijaviti drugim nalogom.
                 </p>
@@ -172,40 +194,13 @@ export default function LoginPage() {
                 </Button>
               </div>
             )}
-            <h1 className="text-xl font-bold text-foreground">Stolarija CRM</h1>
-            <p className="text-sm text-muted-foreground mt-1">
+            <h1 className="text-2xl tracking-tight">
+              <TermoPlastCrmTitle />
+            </h1>
+            <p className="text-base text-muted-foreground mt-2">
               {isRegistering ? "Kreirajte vaš nalog" : "Prijavite se na vaš nalog"}
             </p>
           </div>
-
-          {!isRegistering && (
-            <div className="mb-6 p-4 bg-primary/5 rounded-xl border border-primary/10 space-y-2">
-              <p className="text-[10px] font-bold text-primary uppercase tracking-wider mb-1">Demo pristup</p>
-              <div className="flex flex-col gap-1.5">
-                <div className="flex items-center justify-between text-xs">
-                  <span className="text-muted-foreground">Email:</span>
-                  <button 
-                    type="button"
-                    onClick={() => setEmail("admin@stolarija.rs")}
-                    className="font-medium text-foreground hover:text-primary transition-colors cursor-pointer"
-                  >
-                    admin@stolarija.rs
-                  </button>
-                </div>
-                <div className="flex items-center justify-between text-xs">
-                  <span className="text-muted-foreground">Šifra:</span>
-                  <button 
-                    type="button"
-                    onClick={() => setPassword("123456789")}
-                    className="font-medium text-foreground hover:text-primary transition-colors cursor-pointer"
-                  >
-                    123456789
-                  </button>
-                </div>
-              </div>
-              <p className="text-[9px] text-muted-foreground italic mt-2">* Kliknite na podatke iznad za automatsko popunjavanje</p>
-            </div>
-          )}
 
           <form onSubmit={handleAuth} className="space-y-4">
             {isRegistering && (
@@ -305,7 +300,7 @@ export default function LoginPage() {
             </Button>
           </form>
           <div className="mt-6 space-y-2">
-            <p className="text-center text-xs text-muted-foreground">
+            <p className="text-center text-sm text-muted-foreground">
               {isRegistering ? "Već imate nalog?" : "Nemate nalog?"}
               <button 
                 type="button" 

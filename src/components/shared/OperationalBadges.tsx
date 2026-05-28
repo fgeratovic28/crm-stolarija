@@ -13,9 +13,22 @@ export function OverduePaymentBadge({ job }: { job: Job }) {
   );
 }
 
+/**
+ * Statusi narudžbine kod kojih je materijal već stigao u magacin (možda sa reklamacijom),
+ * pa se ne računa kao kašnjenje isporuke od dobavljača.
+ */
+const RECEIVED_DELIVERY_STATUSES = new Set([
+  "delivered",
+  "partial",
+  "materials_received",
+  "received_with_issues",
+]);
+
 export function DelayedDeliveryBadge({ order }: { order: MaterialOrder }) {
-  if (order.deliveryStatus === "delivered") return null;
-  const isLate = new Date(order.expectedDelivery) < new Date();
+  if (RECEIVED_DELIVERY_STATUSES.has(order.deliveryStatus)) return null;
+  const exp = order.expectedDelivery?.trim();
+  if (!exp) return null;
+  const isLate = new Date(exp) < new Date();
   if (!isLate) return null;
   return (
     <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-semibold bg-warning/10 text-warning">
@@ -38,7 +51,7 @@ export function ScheduledBadge({ date }: { date: string }) {
 export function AttentionIndicator({ count, label }: { count: number; label: string }) {
   if (count === 0) return null;
   return (
-    <div className="flex items-center gap-1.5 text-xs text-warning font-medium">
+    <div className="flex items-center gap-1.5 text-xs text-destructive font-medium">
       <AlertTriangle className="w-3.5 h-3.5" />
       <span>{count} {label}</span>
     </div>

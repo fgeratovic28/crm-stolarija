@@ -7,7 +7,6 @@ const BACKUP_TABLES = [
   "material_orders",
   "job_items",
   "quotes",
-  "quote_lines",
   "activities",
   "work_orders",
   "field_reports",

@@ -1,6 +1,14 @@
 /** Shared geocoding + cache for job/installation maps (Nominatim + localStorage). */
 
-export const GEOCODE_CACHE_KEY = "jobs-map-geocode-cache-v1";
+import {
+  buildGeocodeCandidates,
+  isCoordsPlausibleForGeocodeAddress,
+  normalizeAddressForGeocoding,
+} from "../../lib/geocode-plausibility";
+
+export { normalizeAddressForGeocoding } from "../../lib/geocode-plausibility";
+
+export const GEOCODE_CACHE_KEY = "jobs-map-geocode-cache-v3";
 
 /** Ceo string je samo lat,lng (npr. za mapu), bez tekstualne adrese. */
 export function installationAddressIsCoordinatesOnly(text: string | undefined | null): boolean {
@@ -40,7 +48,19 @@ export function readGeocodeCache(): Record<string, { lat: number; lng: number }>
     const raw = localStorage.getItem(GEOCODE_CACHE_KEY);
     if (!raw) return {};
     const parsed = JSON.parse(raw) as Record<string, { lat: number; lng: number }>;
-    return parsed && typeof parsed === "object" ? parsed : {};
+    if (!parsed || typeof parsed !== "object") return {};
+
+    let changed = false;
+    const cleaned: Record<string, { lat: number; lng: number }> = {};
+    for (const [key, coords] of Object.entries(parsed)) {
+      if (!coords || !isCoordsPlausibleForGeocodeAddress(key, coords)) {
+        changed = true;
+        continue;
+      }
+      cleaned[key] = coords;
+    }
+    if (changed) writeGeocodeCache(cleaned);
+    return cleaned;
   } catch {
     return {};
   }
@@ -55,82 +75,26 @@ export function writeGeocodeCache(cache: Record<string, { lat: number; lng: numb
   }
 }
 
-export function normalizeAddressForGeocoding(address?: string): string {
-  return (address ?? "").trim().replace(/\s+/g, " ");
-}
-
-function extractCoordinates(rows: Array<{ lat?: string; lon?: string }>): { lat: number; lng: number } | null {
-  const first = rows[0];
-  const lat = Number(first?.lat);
-  const lng = Number(first?.lon);
-  if (!Number.isFinite(lat) || !Number.isFinite(lng)) return null;
-  if (lat < -90 || lat > 90 || lng < -180 || lng > 180) return null;
-  return { lat, lng };
-}
-
-function buildGeocodeCandidates(address: string): string[] {
-  const normalized = normalizeAddressForGeocoding(address);
-  if (!normalized) return [];
-
-  const lowered = normalized.toLowerCase();
-  const hasCountry =
-    lowered.includes("serbia") ||
-    lowered.includes("srbija") ||
-    lowered.includes("republika srbija");
-
-  const noParen = normalized.replace(/\([^)]*\)/g, " ").replace(/\s+/g, " ").trim();
-  const noFloorOrApartment = noParen
-    .replace(/\b(stan|sprat|ulaz)\b[^,]*/gi, " ")
-    .replace(/\s+/g, " ")
-    .trim();
-
-  const variants = [
-    normalized,
-    noParen,
-    noFloorOrApartment,
-    hasCountry ? "" : `${normalized}, Srbija`,
-    hasCountry ? "" : `${normalized}, Serbia`,
-  ];
-
-  const unique = new Set<string>();
-  for (const value of variants) {
-    const cleaned = normalizeAddressForGeocoding(value);
-    if (cleaned) unique.add(cleaned);
-  }
-
-  return [...unique];
-}
-
 export async function geocodeAddress(address: string): Promise<{ lat: number; lng: number } | null> {
-  const candidates = buildGeocodeCandidates(address);
-  for (const candidate of candidates) {
-    const params = new URLSearchParams({
-      format: "jsonv2",
-      limit: "1",
-      addressdetails: "0",
-      countrycodes: "rs",
-      "accept-language": "sr,en",
-      q: candidate,
+  const q = normalizeAddressForGeocoding(address);
+  if (!q) return null;
+
+  try {
+    const params = new URLSearchParams({ q });
+    const res = await fetch(`/api/geocode?${params.toString()}`, {
+      headers: { Accept: "application/json" },
     });
-
-    let res: Response;
-    try {
-      res = await fetch(`https://nominatim.openstreetmap.org/search?${params.toString()}`, {
-        headers: {
-          Accept: "application/json",
-        },
-      });
-    } catch {
-      continue;
-    }
-    if (!res.ok) continue;
-
-    const rows = (await res.json()) as Array<{ lat?: string; lon?: string }>;
-    const extracted = extractCoordinates(rows);
-    if (extracted) return extracted;
+    if (!res.ok) return null;
+    const body = (await res.json()) as { ok?: boolean; lat?: number; lng?: number };
+    if (body.ok !== true) return null;
+    const lat = Number(body.lat);
+    const lng = Number(body.lng);
+    if (!Number.isFinite(lat) || !Number.isFinite(lng)) return null;
+    if (lat < -90 || lat > 90 || lng < -180 || lng > 180) return null;
+    return { lat, lng };
+  } catch {
+    return null;
   }
-
-  return null;
 }
 
 export function tryStoredCoordinates(lat?: unknown, lng?: unknown): { lat: number; lng: number } | null {
@@ -144,6 +108,39 @@ export function tryStoredCoordinates(lat?: unknown, lng?: unknown): { lat: numbe
   return { lat: la, lng: ln };
 }
 
+/** Više varijanti adrese + keš; ne oslanja se na jedan API odgovor. */
+async function geocodeAddressWithCandidates(primaryAddress: string): Promise<{ lat: number; lng: number } | null> {
+  const candidates = buildGeocodeCandidates(primaryAddress);
+  if (candidates.length === 0) return null;
+
+  const cache = readGeocodeCache();
+  const primaryKey = normalizeAddressForGeocoding(primaryAddress);
+
+  for (const candidate of candidates) {
+    const key = normalizeAddressForGeocoding(candidate);
+    const cached = cache[key];
+    if (cached && isCoordsPlausibleForGeocodeAddress(key, cached)) {
+      return cached;
+    }
+  }
+
+  for (const candidate of candidates.slice(0, 6)) {
+    const key = normalizeAddressForGeocoding(candidate);
+    const geocoded = await geocodeAddress(candidate);
+    if (!geocoded) continue;
+    if (!isCoordsPlausibleForGeocodeAddress(key, geocoded)) continue;
+
+    cache[key] = geocoded;
+    if (primaryKey && primaryKey !== key) {
+      cache[primaryKey] = geocoded;
+    }
+    writeGeocodeCache(cache);
+    return geocoded;
+  }
+
+  return null;
+}
+
 /**
  * Resolve WGS84 coordinates: DB columns → inline lat,lng in text → Nominatim (cached).
  */
@@ -152,22 +149,19 @@ export async function resolveCoordinatesForInstallation(opts: {
   installationLat?: number | null;
   installationLng?: number | null;
 }): Promise<{ lat: number; lng: number } | null> {
+  const normalized = normalizeAddressForGeocoding(opts.address ?? undefined);
+
   const stored = tryStoredCoordinates(opts.installationLat, opts.installationLng);
-  if (stored) return stored;
+  if (stored && isCoordsPlausibleForGeocodeAddress(normalized, stored)) {
+    return stored;
+  }
 
   const inline = parseInlineCoordinates(opts.address ?? null);
-  if (inline) return inline;
+  if (inline && isCoordsPlausibleForGeocodeAddress(normalized, inline)) {
+    return inline;
+  }
 
-  const normalized = normalizeAddressForGeocoding(opts.address ?? undefined);
   if (!normalized) return null;
 
-  const cache = readGeocodeCache();
-  if (cache[normalized]) return cache[normalized];
-
-  const geocoded = await geocodeAddress(normalized);
-  if (!geocoded) return null;
-
-  cache[normalized] = geocoded;
-  writeGeocodeCache(cache);
-  return geocoded;
+  return geocodeAddressWithCandidates(normalized);
 }

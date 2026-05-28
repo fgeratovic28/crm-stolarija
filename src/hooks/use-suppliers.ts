@@ -16,30 +16,25 @@ export function useSuppliers() {
   const { data: suppliers, isLoading } = useQuery({
     queryKey: ["suppliers"],
     queryFn: async () => {
-      const { data, error } = await supabase
-        .from("suppliers")
-        .select("*")
-        .order("name");
+       const { data, error } = await supabase
+         .from("suppliers")
+         .select("id, name, contact_person, phone, email, address, active, bank_account, pib, category")
+         .order("name");
 
-      if (error) throw error;
-      return data.map((d) => ({
-        id: d.id,
-        name: d.name,
-        contactPerson: d.contact_person,
-        phone: d.phone,
-        email: d.email,
-        address: d.address,
-        materialTypes: d.material_types || [],
-        active: d.active,
-        bankAccount: (d.bank_account as string | null) ?? undefined,
-        pib: (d.pib as string | null) ?? undefined,
-        nbShippingMethod: (d.nb_shipping_method as string | null) ?? undefined,
-        nbPaymentDaysAfterOrder:
-          d.nb_payment_days_after_order != null ? Number(d.nb_payment_days_after_order) : undefined,
-        nbLegalReference: (d.nb_legal_reference as string | null) ?? undefined,
-        nbPaymentNote: (d.nb_payment_note as string | null) ?? undefined,
-        nbDeliveryAddressOverride: (d.nb_delivery_address_override as string | null) ?? undefined,
-      })) as Supplier[];
+       if (error) throw error;
+       return data.map((d) => ({
+         id: d.id,
+         name: d.name,
+        contactPerson: (d.contact_person as string | null) ?? "",
+        phone: (d.phone as string | null) ?? "",
+        email: (d.email as string | null) ?? "",
+        address: (d.address as string | null) ?? "",
+         materialTypes: [],
+         active: d.active,
+        category: (d.category as string | null) ?? undefined,
+         bankAccount: (d.bank_account as string | null) ?? undefined,
+         pib: (d.pib as string | null) ?? undefined,
+       })) as Supplier[];
     },
   });
 
@@ -53,18 +48,10 @@ export function useSuppliers() {
           phone: newSupplier.phone,
           email: newSupplier.email,
           address: newSupplier.address,
-          material_types: [],
           active: newSupplier.active,
+          category: newSupplier.category?.trim() || null,
           bank_account: newSupplier.bankAccount?.trim() || null,
           pib: newSupplier.pib?.trim() || null,
-          nb_shipping_method: newSupplier.nbShippingMethod?.trim() || null,
-          nb_payment_days_after_order:
-            newSupplier.nbPaymentDaysAfterOrder != null && Number.isFinite(newSupplier.nbPaymentDaysAfterOrder)
-              ? Math.round(Number(newSupplier.nbPaymentDaysAfterOrder))
-              : null,
-          nb_legal_reference: newSupplier.nbLegalReference?.trim() || null,
-          nb_payment_note: newSupplier.nbPaymentNote?.trim() || null,
-          nb_delivery_address_override: newSupplier.nbDeliveryAddressOverride?.trim() || null,
         }])
         .select()
         .single();
@@ -91,19 +78,10 @@ export function useSuppliers() {
           phone: updatedSupplier.phone,
           email: updatedSupplier.email,
           address: updatedSupplier.address,
-          material_types: [],
           active: updatedSupplier.active,
+          category: updatedSupplier.category?.trim() || null,
           bank_account: updatedSupplier.bankAccount?.trim() || null,
           pib: updatedSupplier.pib?.trim() || null,
-          nb_shipping_method: updatedSupplier.nbShippingMethod?.trim() || null,
-          nb_payment_days_after_order:
-            updatedSupplier.nbPaymentDaysAfterOrder != null &&
-            Number.isFinite(updatedSupplier.nbPaymentDaysAfterOrder)
-              ? Math.round(Number(updatedSupplier.nbPaymentDaysAfterOrder))
-              : null,
-          nb_legal_reference: updatedSupplier.nbLegalReference?.trim() || null,
-          nb_payment_note: updatedSupplier.nbPaymentNote?.trim() || null,
-          nb_delivery_address_override: updatedSupplier.nbDeliveryAddressOverride?.trim() || null,
         })
         .eq("id", updatedSupplier.id);
 

@@ -4,9 +4,12 @@ export type ModuleName =
   | "dashboard"
   | "customers"
   | "jobs"
+  | "quotes"
+  | "jobs-map"
   | "activities"
   | "finances"
   | "material-orders"
+  | "material-reception"
   | "suppliers"
   | "vehicles"
   | "workers"
@@ -55,9 +58,12 @@ export const MODULE_ACCESS: Record<UserRole, ModuleName[]> = {
     "dashboard",
     "customers",
     "jobs",
+    "quotes",
+    "jobs-map",
     "activities",
     "finances",
     "material-orders",
+    "material-reception",
     "suppliers",
     "vehicles",
     "workers",
@@ -68,14 +74,36 @@ export const MODULE_ACCESS: Record<UserRole, ModuleName[]> = {
     "teams",
     "settings",
   ],
-  /** Kupci, Poslovi, Aktivnosti; fajlovi na nivou posla (prilozi). */
-  office: ["dashboard", "customers", "jobs", "activities", "files"],
-  /** Dashboard + poslovi (evidencija uplata na poslu) + finansijski modul (tri dela: Finansije / Plaćanja / Izveštaji). */
+  /** Kancelarija / Prodaja: kompletan rad na poslu (ponude/finansije/RN/izveštaji), bez mape završenih poslova. */
+  office: [
+    "dashboard",
+    "customers",
+    "jobs",
+    "activities",
+    "quotes",
+    "finances",
+    "work-orders",
+    "field-reports",
+    "files",
+  ],
+  /** Finansije: poslovi (uplate) + finansijski modul (tri dela: Finansije / Plaćanja / Izveštaji). Bez mape završenih poslova. */
   finance: ["dashboard", "jobs", "finances"],
-  procurement: ["dashboard", "jobs", "material-orders", "suppliers", "vehicles", "files"],
-  production: ["dashboard", "work-orders", "files"],
+  procurement: [
+    "dashboard",
+    "jobs",
+    "finances",
+    "material-orders",
+    "material-reception",
+    "suppliers",
+    "vehicles",
+    "workers",
+    "files",
+  ],
+  /** Proizvodnja fizički prima materijal — vidi i koristi stranicu Prijema, bez pristupa listi porudžbina. */
+  production: ["dashboard", "work-orders", "material-reception"],
   montaza: ["dashboard", "work-orders"],
-  teren: ["dashboard", "work-orders", "field-reports"],
+  /** Teren: bez globalne stranice „Terenski izveštaji“ i bez kartice liste izveštaja na poslu; izveštaj samo kroz radni nalog. */
+  teren: ["dashboard", "work-orders"],
 };
 
 /** Da li uloga iz baze/JWT-a postoji u aplikaciji i ima bar jedan modul (izbegava petlju / ↔ /login). */
@@ -123,6 +151,10 @@ export const ACTION_ACCESS: Record<UserRole, ActionName[]> = {
     "add_activity",
     "upload_file",
     "update_job_status",
+    "record_payment",
+    "create_work_order",
+    "edit_work_order",
+    "cancel_work_order",
     "add_field_report",
     "add_mounting_report",
   ],
@@ -132,6 +164,7 @@ export const ACTION_ACCESS: Record<UserRole, ActionName[]> = {
     "view_full_finance",
   ],
   procurement: [
+    "update_job_status",
     "create_order",
     "edit_order",
     "upload_file",
@@ -140,6 +173,10 @@ export const ACTION_ACCESS: Record<UserRole, ActionName[]> = {
     "edit_vehicle",
     "delete_vehicle",
     "archive_vehicle",
+    "create_worker",
+    "edit_worker",
+    "delete_worker",
+    "manage_worker_sick_leave",
   ],
   production: [
     "view_production_details",

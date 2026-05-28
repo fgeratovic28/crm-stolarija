@@ -4,6 +4,7 @@ import { CalendarIcon, Download, FileText, Loader2 } from "lucide-react";
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { Button } from "@/components/ui/button";
 import { Label } from "@/components/ui/label";
+import { Input } from "@/components/ui/input";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import { Calendar } from "@/components/ui/calendar";
@@ -24,6 +25,7 @@ export function ExportModal({ open, onOpenChange }: ExportModalProps) {
 
   const [status, setStatus] = useState("all");
   const [customer, setCustomer] = useState("all");
+  const [customerSearch, setCustomerSearch] = useState("");
   const [dateFrom, setDateFrom] = useState<Date>();
   const [dateTo, setDateTo] = useState<Date>();
 
@@ -32,6 +34,11 @@ export function ExportModal({ open, onOpenChange }: ExportModalProps) {
     jobsList.forEach(j => unique.set(j.customer.id, j.customer.fullName));
     return Array.from(unique, ([id, name]) => ({ id, name }));
   }, [jobsList]);
+  const filteredCustomers = useMemo(() => {
+    const q = customerSearch.trim().toLowerCase();
+    if (!q) return customers;
+    return customers.filter((c) => c.name.toLowerCase().includes(q));
+  }, [customers, customerSearch]);
 
   const filteredJobs = useMemo(() => {
     return jobsList.filter((j: Job) => {
@@ -56,6 +63,7 @@ export function ExportModal({ open, onOpenChange }: ExportModalProps) {
   const resetFilters = () => {
     setStatus("all");
     setCustomer("all");
+    setCustomerSearch("");
     setDateFrom(undefined);
     setDateTo(undefined);
   };
@@ -107,8 +115,19 @@ export function ExportModal({ open, onOpenChange }: ExportModalProps) {
             <Select value={customer} onValueChange={setCustomer}>
               <SelectTrigger><SelectValue /></SelectTrigger>
               <SelectContent>
+                <div className="p-2">
+                  <Input
+                    value={customerSearch}
+                    onChange={(e) => setCustomerSearch(e.target.value)}
+                    placeholder="Pretraga kupca..."
+                    onKeyDown={(e) => {
+                      // Spreči Radix Select typeahead da pri kucanju automatski menja selekciju.
+                      e.stopPropagation();
+                    }}
+                  />
+                </div>
                 <SelectItem value="all">Svi kupci</SelectItem>
-                {customers.map(c => (
+                {filteredCustomers.map(c => (
                   <SelectItem key={c.id} value={c.id}>{c.name}</SelectItem>
                 ))}
               </SelectContent>
@@ -150,7 +169,7 @@ export function ExportModal({ open, onOpenChange }: ExportModalProps) {
           {/* Summary */}
           <div className="flex flex-col gap-2 rounded-lg bg-muted/50 px-3 py-2 text-sm text-muted-foreground sm:flex-row sm:items-center sm:justify-between">
             <span>Pronađeno poslova: <strong className="text-foreground">{filteredJobs.length}</strong></span>
-            {(status !== "all" || customer !== "all" || dateFrom || dateTo) && (
+            {(status !== "all" || customer !== "all" || customerSearch.trim().length > 0 || dateFrom || dateTo) && (
               <Button variant="ghost" size="sm" className="h-7 w-full shrink-0 text-xs sm:w-auto" onClick={resetFilters}>Poništi filtere</Button>
             )}
           </div>

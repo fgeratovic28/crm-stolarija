@@ -1,16 +1,14 @@
+import { useEffect, useRef } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { supabase } from "@/lib/supabase";
 import { FieldReport, FieldReportDetails, WorkOrderType } from "@/types";
 import { useToast } from "@/hooks/use-toast";
 import { useAuthStore } from "@/stores/auth-store";
 import { formatQueryError } from "@/lib/utils";
-import { upsertSystemActivity } from "@/lib/activity-automation";
-import { recomputeJobStatus } from "@/lib/job-status-automation";
-import {
-  applyFieldReportWorkflowBranching,
-  ensureWorkflowWorkOrders,
-} from "@/lib/work-order-workflow-automation";
+import { submitFieldWorkerFieldReport } from "@/lib/job-workflow-actions";
+import { URGENT_SITE_MISSING_QUERY_KEY } from "@/hooks/use-urgent-site-missing-notifications";
 import { fieldReportFlowForWorkOrderType, isFieldExecutionRole } from "@/lib/field-team-access";
+import { fieldReportEverythingOkFromDbRow } from "@/lib/field-report-mappers";
 
 function parseFieldReportDetails(raw: unknown): FieldReportDetails {
   if (!raw || typeof raw !== "object" || Array.isArray(raw)) return {};
@@ -54,6 +52,9 @@ export function useFieldReports(jobId?: string, workOrderId?: string) {
   const { toast } = useToast();
   const queryClient = useQueryClient();
   const { user } = useAuthStore();
+  const realtimeInstanceIdRef = useRef(
+    `field-reports-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`,
+  );
 
   const fieldTeamScoped = !!(user && isFieldExecutionRole(user.role) && user.teamId);
   const fieldTeamNoTeam = !!(user && isFieldExecutionRole(user.role) && !user.teamId);
@@ -89,11 +90,32 @@ export function useFieldReports(jobId?: string, workOrderId?: string) {
         query = query.eq("work_order_id", workOrderId);
       }
 
+      query = query.order("created_at", { ascending: false });
+
       const { data, error: fetchError } = await query;
 
       if (fetchError) throw fetchError;
 
       const rows = Array.isArray(data) ? data : [];
+
+      const workOrderIds = [
+        ...new Set(
+          rows
+            .map((d) => d.work_order_id)
+            .filter((id): id is string => typeof id === "string" && id.length > 0),
+        ),
+      ];
+      const teamIdByWorkOrderId = new Map<string, string | null>();
+      if (workOrderIds.length > 0) {
+        const { data: woTeamRows, error: woTeamError } = await supabase
+          .from("work_orders")
+          .select("id, team_id")
+          .in("id", workOrderIds);
+        if (woTeamError) throw woTeamError;
+        for (const wo of woTeamRows ?? []) {
+          teamIdByWorkOrderId.set(wo.id, wo.team_id ?? null);
+        }
+      }
 
       return rows.map((d) => {
         const wo = d.work_orders;
@@ -102,6 +124,21 @@ export function useFieldReports(jobId?: string, workOrderId?: string) {
         const jobRow = Array.isArray(jobEmb) ? jobEmb[0] : jobEmb;
         const custRaw = jobRow?.customers;
         const customer = Array.isArray(custRaw) ? custRaw[0] : custRaw;
+
+        const workOrderId =
+          typeof d.work_order_id === "string" ? d.work_order_id : undefined;
+        const embeddedTeamId =
+          typeof woRow?.team_id === "string" && woRow.team_id.length > 0
+            ? woRow.team_id
+            : undefined;
+        const batchTeamId = workOrderId
+          ? teamIdByWorkOrderId.get(workOrderId) ?? undefined
+          : undefined;
+        const resolvedTeamId =
+          embeddedTeamId ||
+          (typeof batchTeamId === "string" && batchTeamId.length > 0
+            ? batchTeamId
+            : undefined);
 
         const resolvedJobId =
           (d.job_id as string | undefined) ?? woRow?.job_id ?? jobId ?? "";
@@ -125,7 +162,11 @@ export function useFieldReports(jobId?: string, workOrderId?: string) {
           siteCanceled: !!d.site_canceled,
           cancelReason: typeof d.cancel_reason === "string" ? d.cancel_reason : undefined,
           jobCompleted: !!d.completed,
-          everythingOk: d.everything_ok !== false,
+          everythingOk: fieldReportEverythingOkFromDbRow({
+            everything_ok: d.everything_ok,
+            issues: d.issues,
+            missing_items: d.missing_items,
+          }),
           issueDescription: d.issues,
           details: parseFieldReportDetails(d.details),
           estimatedInstallationHours: parseEstimatedHours(d.estimated_installation_hours),
@@ -136,6 +177,7 @@ export function useFieldReports(jobId?: string, workOrderId?: string) {
           generalNotes: d.general_report,
           workOrderId: d.work_order_id,
           workOrderType: woRow?.type as WorkOrderType | undefined,
+          teamId: resolvedTeamId,
           job: jobRow
             ? {
                 id: jobRow.id,
@@ -152,83 +194,44 @@ export function useFieldReports(jobId?: string, workOrderId?: string) {
     },
   });
 
+  useEffect(() => {
+    const channelName = `field-reports-live:${jobId ?? "all"}:${workOrderId ?? "all"}:${user?.id ?? "anon"}:${realtimeInstanceIdRef.current}`;
+    const filter = workOrderId
+      ? `work_order_id=eq.${workOrderId}`
+      : jobId
+        ? `job_id=eq.${jobId}`
+        : undefined;
+
+    const channel = supabase.channel(channelName).on(
+      "postgres_changes",
+      {
+        event: "*",
+        schema: "public",
+        table: "field_reports",
+        ...(filter ? { filter } : {}),
+      },
+      () => {
+        void queryClient.invalidateQueries({ queryKey: ["field-reports"] });
+        if (jobId) {
+          void queryClient.invalidateQueries({ queryKey: ["field-reports", jobId] });
+          void queryClient.invalidateQueries({ queryKey: ["job", jobId] });
+          void queryClient.invalidateQueries({ queryKey: ["work-orders", jobId] });
+        }
+        void queryClient.invalidateQueries({ queryKey: ["jobs"] });
+        void queryClient.invalidateQueries({ queryKey: ["work-orders"] });
+        void queryClient.invalidateQueries({ queryKey: ["field-team-work-orders"] });
+        void queryClient.invalidateQueries({ queryKey: ["activities"] });
+      },
+    ).subscribe();
+
+    return () => {
+      void supabase.removeChannel(channel);
+    };
+  }, [jobId, queryClient, user?.id, workOrderId]);
+
   const createReport = useMutation({
     mutationFn: async (report: Omit<FieldReport, "id"> & { workOrderId?: string }) => {
-      // report.images = javni R2 URL-ovi (TEXT[]), generisani pri otpremanju u NewFieldReportModal
-      const detailsJson = report.details && Object.keys(report.details).length > 0 ? report.details : {};
-      const reportData = {
-        work_order_id: report.workOrderId || null,
-        job_id: report.jobId || null,
-        address: report.address?.trim() || null,
-        arrived: report.arrived,
-        arrival_datetime: report.arrivalDate ?? null,
-        site_canceled: report.siteCanceled,
-        cancel_reason: report.cancelReason?.trim() || null,
-        completed: report.jobCompleted,
-        everything_ok: report.everythingOk,
-        issues: report.issueDescription?.trim() || null,
-        images: report.images,
-        missing_items: report.missingItems,
-        additional_needs: report.additionalNeeds,
-        measurements: report.measurements?.trim() || null,
-        general_report: report.generalNotes,
-        details: detailsJson,
-        estimated_installation_hours:
-          report.estimatedInstallationHours != null && Number.isFinite(report.estimatedInstallationHours)
-            ? report.estimatedInstallationHours
-            : null,
-      };
-
-      const { data, error } = await supabase
-        .from("field_reports")
-        .insert([reportData])
-        .select()
-        .single();
-
-      if (error) throw error;
-
-      if (report.workOrderId) {
-        // Sačuvan izveštaj = završen radni nalog (osim eksplicitnog otkazivanja na terenu).
-        const nextStatus: "completed" | "canceled" = report.siteCanceled ? "canceled" : "completed";
-
-        const { error: statusError } = await supabase
-          .from("work_orders")
-          .update({ status: nextStatus })
-          .eq("id", report.workOrderId);
-
-        if (statusError) throw statusError;
-      }
-
-      if (report.jobId) {
-        const reportFlow = fieldReportFlowForWorkOrderType(report.workOrderType);
-        await upsertSystemActivity({
-          jobId: report.jobId,
-          description:
-            reportFlow === "production"
-              ? "Dodat izveštaj proizvodnje"
-              : reportFlow === "mounting"
-                ? "Dodat montažni izveštaj"
-                : "Dodat terenski izveštaj",
-          systemKey: `field-report-created:${data.id}`,
-          authorId: user?.id ?? null,
-        });
-        try {
-          await applyFieldReportWorkflowBranching(data.id as string);
-        } catch (err) {
-          console.warn("applyFieldReportWorkflowBranching posle terenskog izveštaja:", err);
-        }
-        try {
-          await recomputeJobStatus(report.jobId, user?.id ?? null);
-        } catch (err) {
-          console.warn("Auto status recompute failed after field report:", err);
-        }
-        try {
-          await ensureWorkflowWorkOrders(report.jobId);
-        } catch (err) {
-          console.warn("ensureWorkflowWorkOrders posle terenskog izveštaja:", err);
-        }
-      }
-
+      const data = await submitFieldWorkerFieldReport(supabase, report, user?.id ?? null);
       return data;
     },
     onSuccess: async (_, variables) => {
@@ -245,6 +248,7 @@ export function useFieldReports(jobId?: string, workOrderId?: string) {
         await queryClient.refetchQueries({ queryKey: ["job", variables.jobId] });
         queryClient.invalidateQueries({ queryKey: ["work-orders", variables.jobId] });
       }
+      void queryClient.invalidateQueries({ queryKey: [...URGENT_SITE_MISSING_QUERY_KEY] });
       toast({
         title: "Izveštaj sačuvan",
         description:

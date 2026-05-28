@@ -9,16 +9,18 @@ interface BeforeInstallPromptEvent extends Event {
   userChoice: Promise<{ outcome: "accepted" | "dismissed" }>;
 }
 
-const STORAGE_DISMISS = "crm-pwa-install-dismissed-at";
+const STORAGE_DISMISS_IOS = "crm-pwa-install-dismissed-at";
 const STORAGE_INSTALLED = "crm-pwa-installed-marker";
-const DISMISS_MS = 7 * 24 * 60 * 60 * 1000;
+const DISMISS_IOS_MS = 7 * 24 * 60 * 60 * 1000;
 const SHOW_DELAY_IOS_MS = 900;
-const SHOW_DELAY_ANDROID_FALLBACK_MS = 2800;
+/** Android: baner posle kratke pauze ako Chrome još nije poslao beforeinstallprompt. */
+const SHOW_DELAY_ANDROID_MS = 800;
 
 function isStandaloneDisplay(): boolean {
   if (typeof window === "undefined") return true;
   try {
     if (window.matchMedia("(display-mode: standalone)").matches) return true;
+    if (window.matchMedia("(display-mode: fullscreen)").matches) return true;
   } catch {
     /* ignore */
   }
@@ -46,15 +48,16 @@ function isAndroid(): boolean {
 export function InstallAppPrompt() {
   const isElectronApp = import.meta.env.VITE_ELECTRON_BUILD === "true";
   const [visible, setVisible] = useState(false);
+  const [dismissedThisLoad, setDismissedThisLoad] = useState(false);
   const [deferredPrompt, setDeferredPrompt] = useState<BeforeInstallPromptEvent | null>(null);
 
-  const dismissedRecently = useCallback((): boolean => {
+  const dismissedRecentlyIos = useCallback((): boolean => {
     try {
-      const raw = localStorage.getItem(STORAGE_DISMISS);
+      const raw = localStorage.getItem(STORAGE_DISMISS_IOS);
       if (!raw) return false;
       const t = Number(raw);
       if (!Number.isFinite(t)) return false;
-      return Date.now() - t < DISMISS_MS;
+      return Date.now() - t < DISMISS_IOS_MS;
     } catch {
       return false;
     }
@@ -68,15 +71,19 @@ export function InstallAppPrompt() {
     }
   }, []);
 
+  const canShowBanner = useCallback((): boolean => {
+    if (isElectronApp) return false;
+    if (!isLikelyPhone()) return false;
+    if (isStandaloneDisplay()) return false;
+    if (wasMarkedInstalled()) return false;
+    if (dismissedThisLoad) return false;
+    if (typeof navigator !== "undefined" && !navigator.onLine) return false;
+    if (isIOS() && dismissedRecentlyIos()) return false;
+    return isAndroid() || isIOS();
+  }, [dismissedRecentlyIos, dismissedThisLoad, isElectronApp, wasMarkedInstalled]);
+
   useEffect(() => {
-    if (isElectronApp) {
-      return;
-    }
-    if (!isLikelyPhone() || isStandaloneDisplay()) {
-      setVisible(false);
-      return;
-    }
-    if (wasMarkedInstalled() || dismissedRecently()) {
+    if (!canShowBanner()) {
       setVisible(false);
       return;
     }
@@ -84,7 +91,9 @@ export function InstallAppPrompt() {
     const onBeforeInstallPrompt = (e: Event) => {
       e.preventDefault();
       setDeferredPrompt(e as BeforeInstallPromptEvent);
-      setVisible(true);
+      if (isAndroid()) {
+        setVisible(true);
+      }
     };
 
     const onAppInstalled = () => {
@@ -100,29 +109,34 @@ export function InstallAppPrompt() {
     window.addEventListener("beforeinstallprompt", onBeforeInstallPrompt);
     window.addEventListener("appinstalled", onAppInstalled);
 
-    const showAfterDelay = () => {
-      if (isStandaloneDisplay()) return;
-      if (wasMarkedInstalled() || dismissedRecently()) return;
-      if (typeof navigator !== "undefined" && !navigator.onLine) return;
-      setVisible(true);
-    };
+    let timer: ReturnType<typeof setTimeout> | undefined;
 
-    const delayMs = isIOS() ? SHOW_DELAY_IOS_MS : SHOW_DELAY_ANDROID_FALLBACK_MS;
-    const timer = window.setTimeout(showAfterDelay, delayMs);
+    if (isAndroid()) {
+      timer = window.setTimeout(() => {
+        if (canShowBanner()) setVisible(true);
+      }, SHOW_DELAY_ANDROID_MS);
+    } else if (isIOS()) {
+      timer = window.setTimeout(() => {
+        if (canShowBanner()) setVisible(true);
+      }, SHOW_DELAY_IOS_MS);
+    }
 
     return () => {
       window.removeEventListener("beforeinstallprompt", onBeforeInstallPrompt);
       window.removeEventListener("appinstalled", onAppInstalled);
-      window.clearTimeout(timer);
+      if (timer !== undefined) window.clearTimeout(timer);
     };
-  }, [dismissedRecently, wasMarkedInstalled, isElectronApp]);
+  }, [canShowBanner, isElectronApp]);
 
   const handleDismiss = () => {
-    try {
-      localStorage.setItem(STORAGE_DISMISS, String(Date.now()));
-    } catch {
-      /* ignore */
+    if (isIOS()) {
+      try {
+        localStorage.setItem(STORAGE_DISMISS_IOS, String(Date.now()));
+      } catch {
+        /* ignore */
+      }
     }
+    setDismissedThisLoad(true);
     setVisible(false);
     setDeferredPrompt(null);
   };
@@ -131,7 +145,15 @@ export function InstallAppPrompt() {
     if (!deferredPrompt) return;
     try {
       await deferredPrompt.prompt();
-      await deferredPrompt.userChoice;
+      const choice = await deferredPrompt.userChoice;
+      if (choice.outcome === "accepted") {
+        try {
+          localStorage.setItem(STORAGE_INSTALLED, "1");
+        } catch {
+          /* ignore */
+        }
+        setVisible(false);
+      }
     } catch {
       /* ignore */
     } finally {
@@ -140,29 +162,46 @@ export function InstallAppPrompt() {
   };
 
   if (isElectronApp) return null;
-  if (!visible) return null;
-  if (typeof navigator !== "undefined" && !navigator.onLine) return null;
+  if (!visible || !canShowBanner()) return null;
 
   const canUseChromiumInstall = Boolean(deferredPrompt && isAndroid());
 
   return (
     <div
+      role="region"
+      aria-label="Instalacija aplikacije"
       className={cn(
-        "fixed z-40 animate-in fade-in slide-in-from-bottom-4 duration-300",
-        "left-4 right-4 bottom-[max(1rem,env(safe-area-inset-bottom))]",
+        "fixed z-[100] animate-in fade-in slide-in-from-bottom-4 duration-300",
+        "left-3 right-3 bottom-[max(0.75rem,env(safe-area-inset-bottom))]",
         "sm:left-auto sm:right-4 sm:max-w-md",
       )}
     >
-      <div className="rounded-xl border border-border bg-card p-4 shadow-lg">
+      <div
+        className={cn(
+          "rounded-xl border shadow-lg p-4",
+          isAndroid()
+            ? "border-primary/35 bg-primary/[0.06] dark:bg-primary/10"
+            : "border-border bg-card",
+        )}
+      >
         <div className="flex items-start gap-3">
-          <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-full bg-primary/10 text-primary">
+          <div
+            className={cn(
+              "flex h-10 w-10 shrink-0 items-center justify-center rounded-full",
+              isAndroid() ? "bg-primary text-primary-foreground" : "bg-primary/10 text-primary",
+            )}
+          >
             {isIOS() ? <Share2 className="h-5 w-5" aria-hidden /> : <Smartphone className="h-5 w-5" aria-hidden />}
           </div>
           <div className="min-w-0 flex-1 space-y-3">
             <div>
-              <p className="text-sm font-semibold text-foreground">Dodaj aplikaciju na početni ekran</p>
+              <p className="text-sm font-semibold text-foreground">
+                {isAndroid() ? "Instaliraj Termo Plast CRM" : "Dodaj aplikaciju na početni ekran"}
+              </p>
               <p className="mt-1 text-xs text-muted-foreground">
-                Brži pristup i bolje iskustvo kao na običnoj aplikaciji.
+                {isAndroid()
+                  ? "Preporučeno za teren i montažu — brži ulazak bez adresne trake pregledača."
+                  : "Brži pristup i bolje iskustvo kao na običnoj aplikaciji."}
               </p>
             </div>
 
@@ -191,10 +230,9 @@ export function InstallAppPrompt() {
             )}
 
             {isAndroid() && !canUseChromiumInstall && (
-              <p className="text-xs text-muted-foreground">
-                U Chrome meniju <span className="font-medium text-foreground">⋮</span> izaberite{" "}
-                <strong>Instaliraj aplikaciju</strong> ili <strong>Dodaj na početni ekran</strong>. Na nekim uređajima
-                opcija se pojavi tek kada sajt posetiš nekoliko puta.
+              <p className="text-xs text-foreground/90">
+                U Chrome meniju <span className="font-medium">⋮</span> izaberite{" "}
+                <strong>Instaliraj aplikaciju</strong> ili <strong>Dodaj na početni ekran</strong>.
               </p>
             )}
 
@@ -206,7 +244,7 @@ export function InstallAppPrompt() {
 
             <div className="flex flex-wrap items-center justify-end gap-2 pt-1">
               <Button type="button" variant="ghost" size="sm" className="text-muted-foreground" onClick={handleDismiss}>
-                Kasnije
+                {isAndroid() ? "Zatvori" : "Kasnije"}
               </Button>
             </div>
           </div>

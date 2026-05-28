@@ -6,8 +6,6 @@ import { useMaintenanceModeQuery } from "@/hooks/use-maintenance-mode";
 import { Button } from "@/components/ui/button";
 import { performClientSignOut } from "@/lib/sign-out";
 import { MaintenanceUnlockText } from "@/components/MaintenanceUnlockText";
-import { MaintenanceCheckingScreen } from "@/components/MaintenanceCheckingScreen";
-
 type MaintenanceModeGateProps = {
   children: React.ReactNode;
 };
@@ -20,11 +18,7 @@ export function MaintenanceModeGate({ children }: MaintenanceModeGateProps) {
   const { t } = useI18n();
   const queryClient = useQueryClient();
   const { isAuthenticated } = useAuthStore();
-  const { data: maintenanceOn, isLoading, isError } = useMaintenanceModeQuery(true);
-
-  if (isLoading) {
-    return <MaintenanceCheckingScreen />;
-  }
+  const { data: maintenanceOn, isError } = useMaintenanceModeQuery(true);
 
   if (!isError && maintenanceOn === true) {
     return (

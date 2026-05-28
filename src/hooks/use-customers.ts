@@ -12,6 +12,10 @@ const mapDbToCustomer = (db: Record<string, unknown>): Customer => ({
   contactPerson: db.contact_person as string,
   billingAddress: db.billing_address as string,
   installationAddress: db.installation_address as string,
+  installationApartment:
+    typeof db.installation_apartment === "string" ? db.installation_apartment.trim() || undefined : undefined,
+  installationFloor:
+    typeof db.installation_floor === "string" ? db.installation_floor.trim() || undefined : undefined,
   phones: (db.phones as string[]) || [],
   emails: (db.emails as string[]) || [],
   pib: db.pib as string,
@@ -26,6 +30,8 @@ const mapCustomerToDb = (customer: Partial<Customer>) => ({
   contact_person: customer.contactPerson,
   billing_address: customer.billingAddress,
   installation_address: customer.installationAddress,
+  installation_apartment: customer.installationApartment?.trim() || null,
+  installation_floor: customer.installationFloor?.trim() || null,
   phones: customer.phones,
   emails: customer.emails,
   pib: customer.pib,

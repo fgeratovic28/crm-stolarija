@@ -65,7 +65,19 @@ export async function upsertMaterialOrderGeneratedPdf(input: {
 }): Promise<MaterialOrderPdfUpsertResult> {
   const storageKey = buildMaterialOrderFileKey(input.materialOrderId, MATERIAL_ORDER_GENERATED_PDF_STORAGE_LEAF);
   const file = new File([input.blob], input.displayFilename, { type: "application/pdf" });
-  const basePublicUrl = await uploadFileToR2(storageKey, file);
+  const tryUpload = async () => uploadFileToR2(storageKey, file);
+  let basePublicUrl: string;
+  try {
+    basePublicUrl = await tryUpload();
+  } catch (firstError) {
+    // Mobilni/PWA mrežni sloj ume da padne pri prvom pokušaju (edge fetch/load failed) — retry jednom.
+    await new Promise((resolve) => setTimeout(resolve, 700));
+    try {
+      basePublicUrl = await tryUpload();
+    } catch {
+      throw firstError;
+    }
+  }
   const storageUrl = publicUrlWithCacheBust(basePublicUrl);
 
   const { data: rows, error: selErr } = await supabase
@@ -87,6 +99,7 @@ export async function upsertMaterialOrderGeneratedPdf(input: {
       .update({
         storage_key: storageKey,
         size: sizeStr,
+        size_bytes: input.blob.size,
         storage_url: storageUrl,
         uploaded_at: now,
         filename: input.displayFilename,
@@ -102,6 +115,7 @@ export async function upsertMaterialOrderGeneratedPdf(input: {
         category: "supplier",
         filename: input.displayFilename,
         size: sizeStr,
+        size_bytes: input.blob.size,
         uploaded_by: input.uploadedBy,
         uploaded_at: now,
         storage_key: storageKey,

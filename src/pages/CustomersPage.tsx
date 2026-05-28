@@ -27,15 +27,17 @@ export default function CustomersPage() {
       ...data,
       phones: data.phones.map((p: { value: string }) => p.value.trim()).filter(Boolean),
       emails: data.emails.map((e: { value: string }) => e.value.trim()).filter(Boolean),
+      installationApartment: data.installationApartment?.trim() || undefined,
+      installationFloor: data.installationFloor?.trim() || undefined,
     };
 
     if (isEditing) {
       updateCustomer.mutate({ id: id as string, ...transformedData }, {
-        onSuccess: () => navigate("/jobs?tab=customers"),
+        onSuccess: () => navigate("/customers"),
       });
     } else {
       createCustomer.mutate(transformedData, {
-        onSuccess: () => navigate("/jobs?tab=customers"),
+        onSuccess: () => navigate("/customers"),
       });
     }
   };

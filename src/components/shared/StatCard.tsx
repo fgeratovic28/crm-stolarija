@@ -9,11 +9,42 @@ interface StatCardProps {
   trend?: string;
   trendUp?: boolean;
   className?: string;
+  onClick?: () => void;
 }
 
-export const StatCard = memo(function StatCard({ title, value, icon: Icon, trend, trendUp, className }: StatCardProps) {
+export const StatCard = memo(function StatCard({
+  title,
+  value,
+  icon: Icon,
+  trend,
+  trendUp,
+  className,
+  onClick,
+}: StatCardProps) {
+  const clickable = Boolean(onClick);
+
   return (
-    <div className={cn("bg-card rounded-xl border border-border p-5", className)}>
+    <div
+      role={clickable ? "button" : undefined}
+      tabIndex={clickable ? 0 : undefined}
+      onClick={onClick}
+      onKeyDown={
+        clickable
+          ? (e) => {
+              if (e.key === "Enter" || e.key === " ") {
+                e.preventDefault();
+                onClick?.();
+              }
+            }
+          : undefined
+      }
+      className={cn(
+        "bg-card rounded-xl border border-border p-5",
+        clickable &&
+          "cursor-pointer transition-colors hover:border-primary/40 hover:bg-muted/30 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring",
+        className,
+      )}
+    >
       <div className="flex items-start justify-between">
         <div className="space-y-1">
           <p className="text-sm text-muted-foreground">{title}</p>

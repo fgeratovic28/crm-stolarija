@@ -1,18 +1,20 @@
-import { useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { useQueryClient } from "@tanstack/react-query";
 import { useNavigate } from "react-router-dom";
-import { ClipboardList, XCircle, FileDown, Plus, Pencil, FileText, MapPin, Info, UserPlus } from "lucide-react";
+import { ClipboardList, XCircle, FileDown, Plus, Pencil, FileText, MapPin, Info, UserPlus, Camera } from "lucide-react";
 import { GenericBadge } from "@/components/shared/StatusBadge";
 import { EmptyState } from "@/components/shared/EmptyState";
 import { SectionHeader } from "@/components/shared/SectionHeader";
 import { ConfirmDialog } from "@/components/shared/ConfirmDialog";
 import { Button } from "@/components/ui/button";
+import { Badge } from "@/components/ui/badge";
 import { Label } from "@/components/ui/label";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { useRole } from "@/contexts/RoleContext";
 import { cn } from "@/lib/utils";
 import { toast } from "sonner";
+import { invalidateFilesStorageUsage } from "@/lib/files-storage-usage";
 import { exportWorkOrderPDF } from "@/lib/export-documents";
 import { useWorkOrders } from "@/hooks/use-work-orders";
 import { useTeams } from "@/hooks/use-teams";
@@ -20,11 +22,27 @@ import { WorkOrderModal } from "@/components/modals/WorkOrderModal";
 import { useJobRelatedData } from "@/hooks/use-job-data";
 import { FieldReportDetailModal } from "@/components/modals/FieldReportDetailModal";
 import { NewFieldReportModal } from "@/components/modals/NewFieldReportModal";
-import type { WorkOrder, FieldReport } from "@/types";
+import type { WorkOrder, WorkOrderCreateInput, FieldReport } from "@/types";
 import { fieldReportFlowForWorkOrderType, isFieldExecutionRole } from "@/lib/field-team-access";
 import { useAuthStore } from "@/stores/auth-store";
 import { labelWorkOrderType } from "@/lib/activity-labels";
-import { formatDateByAppLanguage, formatDateTimeBySettings } from "@/lib/app-settings";
+import { WorkOrderTypeBadge } from "@/components/work-order/WorkOrderTypeBadge";
+import { OpenInGoogleMapsButton } from "@/components/shared/OpenInGoogleMapsButton";
+import { formatWorkOrderDescriptionForWorker } from "@/lib/work-order-description-display";
+import {
+  INSTALLATION_WORK_ORDER_TYPE,
+  MEASUREMENT_WORK_ORDER_TYPES,
+} from "@/lib/job-status-lifecycle";
+import {
+  formatJobInstallationLocationDisplay,
+  jobInstallationStreetAddress,
+} from "@/lib/job-installation-location";
+import { formatDateTimeBySettings } from "@/lib/app-settings";
+import { formatWorkOrderScheduleDisplay } from "@/lib/schedule-datetime-display";
+import { CameraBarcodeScanner } from "@/components/shared/CameraBarcodeScanner";
+import { useJobItems } from "@/hooks/use-job-items";
+import { isProductionWorkOrderPhaseDeferred } from "@/lib/production-workflow-phase";
+import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 
 const statusVariant: Record<string, "success" | "warning" | "info" | "muted"> = {
   completed: "success", in_progress: "info", pending: "warning", canceled: "muted",
@@ -37,17 +55,46 @@ const statusLabels: Record<string, string> = {
 type WorkOrdersTabProps = {
   jobId?: string;
   workOrders?: WorkOrder[];
+  /** Sa kartice „Aktivni radni nalozi“ na pregledu posla — otvara detalje (isti modal kao „Detalji“). */
+  openDetailWorkOrderId?: string | null;
+  onOpenDetailWorkOrderIdConsumed?: () => void;
 };
 
-export function WorkOrdersTab({ jobId, workOrders }: WorkOrdersTabProps) {
+export function WorkOrdersTab({
+  jobId,
+  workOrders,
+  openDetailWorkOrderId,
+  onOpenDetailWorkOrderIdConsumed,
+}: WorkOrdersTabProps) {
   const queryClient = useQueryClient();
   const { workOrders: orders, isLoading, createWorkOrder, updateWorkOrder } = useWorkOrders(jobId);
-  const { fieldReports, quotes } = useJobRelatedData(jobId);
+  const { fieldReports } = useJobRelatedData(jobId);
+  const { completeByBarcode } = useJobItems(jobId);
   const { teams } = useTeams();
   const navigate = useNavigate();
   const { canPerformAction } = useRole();
   const { user } = useAuthStore();
   const isFieldWorker = isFieldExecutionRole(user?.role);
+
+  const [isCameraScannerOpen, setIsCameraScannerOpen] = useState(false);
+  const [scanningJobId, setScanningJobId] = useState<string | null>(null);
+
+  const handleScanSuccess = async (barcode: string) => {
+    const targetJobId = scanningJobId || jobId;
+    if (!targetJobId) {
+      toast.error("Greška: Nije pronađen ID posla za skeniranje.");
+      return;
+    }
+
+    try {
+      await completeByBarcode.mutateAsync({ jobId: targetJobId, barcode });
+      toast.success(`Uspešno skenirano: ${barcode}`);
+      setIsCameraScannerOpen(false);
+      setScanningJobId(null);
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : "Skeniranje nije uspelo");
+    }
+  };
 
   const canAddReportForOrder = (order: WorkOrder) => {
     const flow = fieldReportFlowForWorkOrderType(order.type);
@@ -55,13 +102,12 @@ export function WorkOrdersTab({ jobId, workOrders }: WorkOrdersTabProps) {
       (flow === "mounting" && canPerformAction("add_mounting_report")) ||
       (flow === "field" && canPerformAction("add_field_report")) ||
       (flow === "production" &&
-        (canPerformAction("add_field_report") || canPerformAction("update_production_status")))
+        (
+          canPerformAction("add_field_report") ||
+          canPerformAction("update_production_status") ||
+          canPerformAction("view_production_details")
+        ))
     );
-  };
-
-  const openInGoogleMaps = (address: string) => {
-    const encodedAddress = encodeURIComponent(address);
-    window.open(`https://www.google.com/maps/search/?api=1&query=${encodedAddress}`, '_blank');
   };
 
   const [modalOpen, setModalOpen] = useState(false);
@@ -89,7 +135,7 @@ export function WorkOrdersTab({ jobId, workOrders }: WorkOrdersTabProps) {
   };
 
   const handleReportAction = (orderId: string) => {
-    const targetOrder = (workOrders ?? orders ?? []).find((o) => o.id === orderId);
+    const targetOrder = baseOrders.find((o) => o.id === orderId);
     if (
       targetOrder &&
       isFieldWorker &&
@@ -118,9 +164,33 @@ export function WorkOrdersTab({ jobId, workOrders }: WorkOrdersTabProps) {
     setNewReportOpen(true);
   };
 
-  const visibleOrders = workOrders ?? orders ?? [];
-  const acceptedFinalQuote = (quotes ?? []).find((q) => q.status === "accepted" && q.isFinalOffer);
-  const installationScopeLines = acceptedFinalQuote?.lines ?? [];
+  const baseOrders = useMemo(() => {
+    const live = orders ?? [];
+    if (!workOrders) return live;
+    if (live.length === 0) return workOrders;
+    const liveById = new Map(live.map((o) => [o.id, o]));
+    return workOrders.map((o) => liveById.get(o.id) ?? o);
+  }, [workOrders, orders]);
+
+  useEffect(() => {
+    if (!openDetailWorkOrderId) return;
+    const target = baseOrders.find((o) => o.id === openDetailWorkOrderId);
+    if (!target) {
+      if (!isLoading) onOpenDetailWorkOrderIdConsumed?.();
+      return;
+    }
+    setSelectedOrder(target);
+    setModalReadOnly(true);
+    setModalOpen(true);
+    onOpenDetailWorkOrderIdConsumed?.();
+  }, [openDetailWorkOrderId, baseOrders, isLoading, onOpenDetailWorkOrderIdConsumed]);
+
+  const visibleOrders = isProductionWorkOrderPhaseDeferred()
+    ? baseOrders.filter((o) => o.type !== "production")
+    : baseOrders;
+  const hiddenProductionCount = isProductionWorkOrderPhaseDeferred()
+    ? baseOrders.filter((o) => o.type === "production").length
+    : 0;
   const activeOwnTeamOrder = visibleOrders.find(
     (order) =>
       !!user?.teamId &&
@@ -128,13 +198,25 @@ export function WorkOrdersTab({ jobId, workOrders }: WorkOrdersTabProps) {
       order.status === "in_progress"
   );
 
+  /** Globalna stranica Radni nalozi (bez jobId) — ime kupca kao outline dugme. */
+  const jobCustomerLinkAsButton = !jobId && workOrders !== undefined;
+
   const handleStartOrder = (order: WorkOrder) => {
     if (!user?.teamId) return;
     if (activeOwnTeamOrder && activeOwnTeamOrder.id !== order.id) {
       toast.error("Već imate pokrenut nalog. Završite ga pre pokretanja sledećeg.");
       return;
     }
-    updateWorkOrder.mutate({ ...order, status: "in_progress" });
+    updateWorkOrder.mutate(
+      { ...order, status: "in_progress" },
+      {
+        onSuccess: () => {
+          setSelectedOrder((prev) =>
+            prev?.id === order.id ? ({ ...prev, status: "in_progress" } as WorkOrder) : prev,
+          );
+        },
+      },
+    );
   };
 
   const canStartOwnTeamOrder = (order: WorkOrder) => {
@@ -170,18 +252,45 @@ export function WorkOrdersTab({ jobId, workOrders }: WorkOrdersTabProps) {
     setModalOpen(true);
   };
 
-  const handleSaveOrder = (orderData: Omit<WorkOrder, "id"> | WorkOrder) => {
-    if ('id' in orderData) {
-      updateWorkOrder.mutate(orderData as WorkOrder);
+  const handleSaveOrder = async (orderData: WorkOrderCreateInput | WorkOrder) => {
+    if ("id" in orderData && (orderData as WorkOrder).id) {
+      await updateWorkOrder.mutateAsync(orderData as WorkOrder);
     } else {
-      createWorkOrder.mutate(orderData);
+      await createWorkOrder.mutateAsync(orderData as WorkOrderCreateInput);
     }
   };
+
+  const canStartSelectedFromDetails =
+    modalReadOnly && !!selectedOrder && canStartOwnTeamOrder(selectedOrder);
+  const canFinishSelectedFromDetails =
+    modalReadOnly &&
+    !!selectedOrder &&
+    isFieldWorker &&
+    !!user?.teamId &&
+    selectedOrder.assignedTeamId === user.teamId &&
+    selectedOrder.status === "in_progress";
+  const startSelectedDisabled =
+    !!selectedOrder &&
+    !!activeOwnTeamOrder &&
+    activeOwnTeamOrder.id !== selectedOrder.id;
+  const startSelectedDisabledReason = startSelectedDisabled
+    ? "Završite aktivni nalog pre pokretanja sledećeg."
+    : undefined;
 
   if (isLoading && !workOrders) return <div className="p-8 flex justify-center"><ClipboardList className="w-8 h-8 animate-pulse text-muted" /></div>;
 
   return (
     <div>
+      {hiddenProductionCount > 0 ? (
+        <Alert className="mb-3 border-muted-foreground/25 bg-muted/30">
+          <Info className="h-4 w-4" />
+          <AlertTitle>Proizvodnja nije u ovom pregledu</AlertTitle>
+          <AlertDescription>
+            U fazi 1 proizvodnja se vodi van CRM-a; sakriveno je {hiddenProductionCount}{" "}
+            {hiddenProductionCount === 1 ? "nalog tipa Proizvodnja" : "naloga tipa Proizvodnja"} (i dalje postoje u bazi).
+          </AlertDescription>
+        </Alert>
+      ) : null}
       <SectionHeader
         title="Radni nalozi"
         subtitle={`${visibleOrders.length} nalog${visibleOrders.length === 1 ? "" : "a"}`}
@@ -205,7 +314,20 @@ export function WorkOrdersTab({ jobId, workOrders }: WorkOrdersTabProps) {
         <div className="grid gap-3">
           {visibleOrders.map((o) => {
             const team = teams?.find(t => t.id === o.assignedTeamId);
-            const orderWithJob = o as WorkOrder & { job?: { id: string, jobNumber: string, installationAddress?: string } };
+            const orderWithJob = o as WorkOrder & {
+              job?: {
+                id: string;
+                jobNumber: string;
+                customerName?: string;
+                installationAddress?: string;
+                installationApartment?: string | null;
+                installationFloor?: string | null;
+              };
+            };
+            const jobLinkLabel =
+              orderWithJob.job?.customerName?.trim() ||
+              orderWithJob.job?.jobNumber ||
+              "Posao";
             return (
               <div key={o.id} className="bg-card rounded-xl border border-border p-4 hover:shadow-sm transition-shadow">
                 <div className="flex flex-col sm:flex-row sm:items-start gap-3">
@@ -213,37 +335,59 @@ export function WorkOrdersTab({ jobId, workOrders }: WorkOrdersTabProps) {
                     <ClipboardList className="w-4 h-4 text-primary" />
                   </div>
                   <div className="flex-1 min-w-0">
-                    <div className="flex items-center gap-2 mb-1 flex-wrap">
-                      <span className="font-medium text-sm text-foreground">{labelWorkOrderType(o.type)}</span>
+                    <div className="flex items-center gap-2 flex-wrap mb-1">
+                      {!isFieldWorker ? <WorkOrderTypeBadge type={o.type} size="sm" /> : null}
                       <GenericBadge label={statusLabels[o.status]} variant={statusVariant[o.status]} />
                       {!o.assignedTeamId ? (
                         <GenericBadge label="Neraspoređeno" variant="warning" />
                       ) : null}
-                      {orderWithJob.job && !canPerformAction("view_own_team_only") && (
-                        <button className="text-[11px] text-primary hover:underline font-medium" onClick={() => navigate(`/jobs/${orderWithJob.job?.id}`)}>
-                          {orderWithJob.job.jobNumber}
-                        </button>
-                      )}
-                      {orderWithJob.job && canPerformAction("view_own_team_only") && (
-                        <span className="text-[11px] text-muted-foreground font-medium">
-                          {orderWithJob.job.jobNumber}
-                        </span>
-                      )}
-                    </div>
-                    <p className="text-sm text-muted-foreground leading-relaxed">{o.description}</p>
-                    
-                    {orderWithJob.job?.installationAddress && (
-                      <div className="mt-2 flex items-center gap-1.5">
-                        <MapPin className="w-3.5 h-3.5 text-primary shrink-0" />
-                        <span className="text-xs font-medium text-foreground truncate">{orderWithJob.job.installationAddress}</span>
-                        <button 
-                          onClick={() => openInGoogleMaps(orderWithJob.job!.installationAddress!)}
-                          className="text-[10px] text-primary hover:underline ml-1 font-semibold"
+                      {orderWithJob.job ? (
+                        <button
+                          type="button"
+                          className={cn(
+                            "text-[11px] text-primary font-medium",
+                            jobCustomerLinkAsButton
+                              ? "inline-flex items-center rounded-md border border-input bg-background px-2 py-0.5 shadow-sm transition-colors hover:bg-accent hover:text-accent-foreground dark:border-white/[0.15]"
+                              : "hover:underline",
+                          )}
+                          onClick={() => navigate(`/jobs/${orderWithJob.job!.id}`)}
                         >
-                          Otvori u Google Mapama
+                          {jobLinkLabel}
                         </button>
-                      </div>
-                    )}
+                      ) : null}
+                    </div>
+                    <p className="text-sm text-muted-foreground leading-relaxed">
+                      {isFieldExecutionRole(user?.role)
+                        ? formatWorkOrderDescriptionForWorker(o.description, o.type)
+                        : o.description}
+                    </p>
+                    
+                    {(() => {
+                      const isMeasOrInst =
+                        o.type === INSTALLATION_WORK_ORDER_TYPE ||
+                        MEASUREMENT_WORK_ORDER_TYPES.includes(o.type);
+                      if (!isMeasOrInst || !orderWithJob.job) return null;
+                      const street = jobInstallationStreetAddress({
+                        installationAddress: orderWithJob.job.installationAddress,
+                      });
+                      const label = formatJobInstallationLocationDisplay({
+                        installationAddress: orderWithJob.job.installationAddress,
+                        installationApartment: orderWithJob.job.installationApartment,
+                        installationFloor: orderWithJob.job.installationFloor,
+                      });
+                      if (!label.trim()) return null;
+                      return (
+                        <div className="mt-2 space-y-2">
+                          <div className="flex items-start gap-1.5 min-w-0">
+                            <MapPin className="w-3.5 h-3.5 text-primary shrink-0 mt-0.5" />
+                            <span className="text-xs font-medium text-foreground leading-snug">{label}</span>
+                          </div>
+                          {street ? (
+                            <OpenInGoogleMapsButton address={street} size="default" className="w-full sm:w-auto" />
+                          ) : null}
+                        </div>
+                      );
+                    })()}
 
                     <div className="flex flex-wrap gap-x-4 gap-y-1 mt-2 text-xs text-muted-foreground">
                       <span>
@@ -252,40 +396,46 @@ export function WorkOrdersTab({ jobId, workOrders }: WorkOrdersTabProps) {
                           {team?.name || (o.assignedTeamId ? "—" : "Neraspoređeno")}
                         </span>
                       </span>
-                      <span>
-                        Kreiran:{" "}
-                        <span className="text-foreground font-medium">
-                          {o.createdAt ? formatDateTimeBySettings(o.createdAt) : "—"}
+                      {!isFieldWorker ? (
+                        <span>
+                          Kreiran:{" "}
+                          <span className="text-foreground font-medium">
+                            {o.createdAt ? formatDateTimeBySettings(o.createdAt) : "—"}
+                          </span>
                         </span>
-                      </span>
+                      ) : null}
                       <span>
                         Zakazan:{" "}
                         <span className="text-foreground font-medium">
-                          {formatDateByAppLanguage(o.date) || o.date}
+                          {formatWorkOrderScheduleDisplay({
+                            date: o.date,
+                            description: o.description,
+                            type: o.type,
+                          }) || o.date}
                         </span>
                       </span>
                       {o.productionRef && <span>Proiz: <span className="font-medium">{o.productionRef}</span></span>}
                       {o.installationRef && <span>Ugr: <span className="font-medium">{o.installationRef}</span></span>}
                     </div>
-                    {o.type === "installation" && installationScopeLines.length > 0 && (
-                      <div className="mt-2 rounded-lg border border-border bg-muted/20 p-2.5">
-                        <p className="text-[11px] font-semibold uppercase tracking-wide text-muted-foreground mb-1">
-                          Stavke finalne ponude (bez cena)
-                        </p>
-                        <ul className="space-y-1">
-                          {installationScopeLines.map((line) => (
-                            <li key={line.id} className="text-xs text-foreground">
-                              {line.description} · količina {line.quantity}
-                            </li>
-                          ))}
-                        </ul>
-                      </div>
-                    )}
                   </div>
                   <div className="flex gap-1 shrink-0">
                     <Button variant="ghost" size="sm" className="text-muted-foreground hover:text-primary" onClick={() => handleViewOrder(o)}>
                       <Info className="w-4 h-4 mr-1" /> Detalji
                     </Button>
+                    {o.type === "production" && o.status !== "completed" && o.status !== "canceled" && (
+                      <Button
+                        variant="ghost"
+                        size="sm"
+                        className="text-muted-foreground hover:text-primary"
+                        onClick={() => {
+                          setScanningJobId(o.jobId);
+                          setIsCameraScannerOpen(true);
+                        }}
+                        title="Skeniraj profile kamerom"
+                      >
+                        <Camera className="w-4 h-4 mr-1" /> Skeniraj
+                      </Button>
+                    )}
                     <Button
                       variant="ghost"
                       size="sm"
@@ -295,7 +445,9 @@ export function WorkOrdersTab({ jobId, workOrders }: WorkOrdersTabProps) {
                           attachGeneratedPdf: !!user?.id && !!jobId,
                           userId: user?.id,
                           onPdfAttached: (r) => {
-                            if (jobId) queryClient.invalidateQueries({ queryKey: ["files", jobId] });
+                            if (jobId) void queryClient.invalidateQueries({ queryKey: ["files", jobId] });
+                            void queryClient.invalidateQueries({ queryKey: ["files", "all"] });
+                            invalidateFilesStorageUsage(queryClient);
                             toast.success(r === "updated" ? "PDF je ažuriran u Fajlovima" : "PDF je sačuvan u Fajlovima");
                           },
                           onPdfAttachFailed: (m) =>
@@ -328,7 +480,12 @@ export function WorkOrdersTab({ jobId, workOrders }: WorkOrdersTabProps) {
                             <div>
                               <p className="text-sm font-medium">Dodela tima</p>
                               <p className="text-xs text-muted-foreground mt-0.5">
-                                {labelWorkOrderType(o.type)} · {o.date}
+                                {labelWorkOrderType(o.type)} ·{" "}
+                                {formatWorkOrderScheduleDisplay({
+                                  date: o.date,
+                                  description: o.description,
+                                  type: o.type,
+                                }) || o.date}
                               </p>
                             </div>
                             <div className="space-y-2">
@@ -386,7 +543,7 @@ export function WorkOrdersTab({ jobId, workOrders }: WorkOrdersTabProps) {
                         onClick={() => handleFinishOrder(o.id)}
                       >
                         <FileText className="w-4 h-4 mr-1" />
-                        Završi
+                        {o.type === "production" ? "Popuni izveštaj" : "Završi"}
                       </Button>
                     )}
                     {!(
@@ -469,6 +626,17 @@ export function WorkOrdersTab({ jobId, workOrders }: WorkOrdersTabProps) {
         isOpen={modalOpen} 
         onClose={() => setModalOpen(false)} 
         onSave={handleSaveOrder} 
+        onStartOrder={(order) => {
+          handleStartOrder(order);
+        }}
+        canStartFromDetails={canStartSelectedFromDetails}
+        startDisabled={startSelectedDisabled}
+        startDisabledReason={startSelectedDisabledReason}
+        onFinishOrder={(order) => {
+          handleFinishOrder(order.id);
+          setModalOpen(false);
+        }}
+        canFinishFromDetails={canFinishSelectedFromDetails}
         jobId={jobId} 
         order={selectedOrder} 
         readOnly={modalReadOnly}
@@ -485,6 +653,16 @@ export function WorkOrdersTab({ jobId, workOrders }: WorkOrdersTabProps) {
         onOpenChange={setNewReportOpen} 
         workOrderId={selectedWorkOrderId}
       />
+
+      {isCameraScannerOpen && (
+        <CameraBarcodeScanner
+          onScanSuccess={handleScanSuccess}
+          onClose={() => {
+            setIsCameraScannerOpen(false);
+            setScanningJobId(null);
+          }}
+        />
+      )}
     </div>
   );
 }

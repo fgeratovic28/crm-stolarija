@@ -76,7 +76,7 @@ export default function TeamsPage() {
             <table className="w-full">
               <thead>
                 <tr className="border-b border-border bg-muted/30">
-                  {["Naziv tima", "Članovi", "Specijalnost", "Kontakt", "Status", "Akcije"].map(h => (
+                  {["Naziv tima", "Članovi", "Uloga tima", "Kontakt", "Status", "Akcije"].map(h => (
                     <th key={h} className="text-left text-xs font-medium text-muted-foreground px-4 lg:px-5 py-3 uppercase tracking-wider">{h}</th>
                   ))}
                 </tr>
@@ -106,7 +106,7 @@ export default function TeamsPage() {
                       </div>
                     </td>
                     <td className="px-4 lg:px-5 py-3">
-                      <span className="text-sm text-muted-foreground">{t.specialty || "-"}</span>
+                      <span className="text-sm text-muted-foreground">{t.fieldRoleLabel}</span>
                     </td>
                     <td className="px-4 lg:px-5 py-3">
                       <div className="flex items-center gap-2 text-sm text-muted-foreground">
@@ -172,9 +172,7 @@ export default function TeamsPage() {
                         <Phone className="w-3 h-3" />
                         {t.contactPhone}
                       </p>
-                      {t.specialty && (
-                        <p className="text-[10px] text-muted-foreground mt-1 italic">{t.specialty}</p>
-                      )}
+                      <p className="text-[10px] text-muted-foreground mt-1 italic">{t.fieldRoleLabel}</p>
                     </div>
                     <div className="flex items-center gap-2">
                       <GenericBadge 

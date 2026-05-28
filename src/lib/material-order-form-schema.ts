@@ -17,6 +17,20 @@ export const optionalVatPct = z.preprocess((val) => {
   return Math.min(100, Math.max(0, n));
 }, z.number().optional());
 
+const procurementMetaSchema = z
+  .object({
+    work_order: z.string().optional(),
+    position: z.string().optional(),
+    article_code: z.string().optional(),
+    /** Za ručne stavke može ostati prazno — čuva se iz „Naziv / opis“ pri slanju. */
+    article: z.string().optional(),
+    color: z.string().optional(),
+    uom: z.string().optional(),
+    length_mm: z.number().nullable().optional(),
+    manual_line: z.boolean().optional(),
+  })
+  .optional();
+
 export const orderLineSchema = z.object({
   description: z.string().min(1, "Unesite naziv stavke"),
   quantity: z.coerce.number().positive("Količina mora biti veća od 0"),
@@ -26,6 +40,7 @@ export const orderLineSchema = z.object({
     (v) => (v === "" || v === undefined || v === null ? undefined : v),
     z.string().optional(),
   ),
+  procurementMeta: procurementMetaSchema,
 });
 
 export const narudzbenicaFieldsSchema = z.object({
@@ -40,19 +55,24 @@ export const narudzbenicaFieldsSchema = z.object({
 });
 
 const baseOrderSchema = z.object({
-  jobId: z.string().optional(),
+  /** Smart Excel: dinamička tabela (kolone + redovi), čuva se u `material_orders.items_json`. */
+  itemsJson: z.any().optional(),
+  jobId: z.string().min(1, "Izaberite posao"),
   /** Na kartici se bira po stavkama; prazno → „other” za CRM. */
   materialType: z.preprocess(
     (v) => (v === "" || v === undefined || v === null ? "other" : v),
     z.string().min(1),
   ),
+  requiredForProductionStart: z.boolean().default(false),
   supplierId: z.string().min(1, "Izaberite dobavljača"),
   requestDate: z.string().min(1, "Datum upita je obavezan"),
-  expectedDelivery: z.string().min(1, "Očekivani datum je obavezan"),
+  /** Ostaje u modelu za CRM / bazu; u formi se ne prikazuje. */
+  expectedDelivery: z.string().optional().default(""),
   deliveryDate: z.string().optional(),
-  price: z.coerce.number().min(0, "Cena ne može biti negativna"),
-  paid: z.boolean().default(false),
-  deliveryVerified: z.boolean().default(false),
+  /** Računa se iz stavki pri čuvanju; u formi se ne prikazuje. */
+  price: z.coerce.number().min(0).optional().default(0),
+  paid: z.boolean().optional().default(false),
+  deliveryVerified: z.boolean().optional().default(false),
   deliveryStatus: z.string().default("pending"),
   notes: z.string().optional(),
   barcode: z.string().optional(),
@@ -112,6 +132,9 @@ export function narudzbenicaDefaultsFromOrder(o: MaterialOrder): NarudzbenicaFie
           unit: l.unit,
           lineNet: l.lineNet,
           materialType: l.materialType ?? undefined,
+          ...(l.procurementMeta?.article?.trim()
+            ? { procurementMeta: l.procurementMeta }
+            : {}),
         }))
       : [
           {

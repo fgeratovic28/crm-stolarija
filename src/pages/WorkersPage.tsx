@@ -24,6 +24,7 @@ import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover
 import { Command, CommandEmpty, CommandGroup, CommandInput, CommandItem, CommandList } from "@/components/ui/command";
 import { ROLE_CONFIG, type UserRole } from "@/types";
 import { cn } from "@/lib/utils";
+import { ConfirmDialog } from "@/components/shared/ConfirmDialog";
 
 type WorkerFormState = {
   userId: string;
@@ -367,18 +368,22 @@ export default function WorkersPage() {
                           </Button>
                         )}
                         {canPerformAction("delete_worker") && (
-                          <Button
-                            size="sm"
-                            variant="ghost"
-                            className="text-destructive hover:text-destructive hover:bg-destructive/10"
-                            onClick={() => {
-                              if (confirm(`Obrisati radnika "${worker.fullName}"?`)) {
-                                deleteWorker.mutate(worker.id);
-                              }
-                            }}
-                          >
-                            <Trash2 className="w-4 h-4" />
-                          </Button>
+                          <ConfirmDialog
+                            title="Obrisati radnika?"
+                            description={`Da li ste sigurni da želite da obrišete radnika "${worker.fullName}"? Ova akcija je nepovratna.`}
+                            confirmLabel="Obriši"
+                            cancelLabel="Otkaži"
+                            onConfirm={() => deleteWorker.mutate(worker.id)}
+                            trigger={
+                              <Button
+                                size="sm"
+                                variant="ghost"
+                                className="text-destructive hover:text-destructive hover:bg-destructive/10"
+                              >
+                                <Trash2 className="w-4 h-4" />
+                              </Button>
+                            }
+                          />
                         )}
                       </div>
                     </TableCell>
@@ -478,16 +483,22 @@ export default function WorkersPage() {
                           </Button>
                         )}
                         {canManageSickLeaves && (
-                          <Button
-                            size="sm"
-                            variant="ghost"
-                            className="text-destructive hover:text-destructive hover:bg-destructive/10"
-                            onClick={() => {
-                              if (confirm("Obrisati bolovanje?")) deleteSickLeave.mutate(leave.id);
-                            }}
-                          >
-                            <Trash2 className="w-4 h-4" />
-                          </Button>
+                          <ConfirmDialog
+                            title="Obrisati bolovanje?"
+                            description="Da li ste sigurni da želite da obrišete ovo odsustvo? Ova akcija je nepovratna."
+                            confirmLabel="Obriši"
+                            cancelLabel="Otkaži"
+                            onConfirm={() => deleteSickLeave.mutate(leave.id)}
+                            trigger={
+                              <Button
+                                size="sm"
+                                variant="ghost"
+                                className="text-destructive hover:text-destructive hover:bg-destructive/10"
+                              >
+                                <Trash2 className="w-4 h-4" />
+                              </Button>
+                            }
+                          />
                         )}
                       </div>
                     </TableCell>

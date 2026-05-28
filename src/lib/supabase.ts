@@ -174,6 +174,39 @@ async function fetchWith401Recovery(
   requestInit?: RequestInit,
 ): Promise<Response> {
   const first = await fetch(input, requestInit);
+
+  /** U dev-u PostgREST vraća JSON sa message/details/hint — browser često pokazuje samo "500". */
+  if (
+    import.meta.env.DEV &&
+    (first.status === 400 || first.status >= 500) &&
+    toUrlString(input).includes("/rest/v1/")
+  ) {
+    try {
+      const url = toUrlString(input);
+      let pathLabel = url;
+      try {
+        pathLabel = new URL(url).pathname + new URL(url).search;
+      } catch {
+        /* ignore */
+      }
+      const ct = first.headers.get("content-type") ?? "";
+      if (ct.includes("application/json")) {
+        const body = (await first.clone().json()) as Record<string, unknown>;
+        console.warn("[Supabase REST]", first.status, pathLabel, {
+          message: body.message,
+          code: body.code,
+          details: body.details,
+          hint: body.hint,
+        });
+      } else {
+        const txt = await first.clone().text();
+        console.warn("[Supabase REST]", first.status, pathLabel, txt.slice(0, 800));
+      }
+    } catch (logErr) {
+      console.debug("[Supabase REST] could not parse error body:", logErr);
+    }
+  }
+
   if (first.status !== 401) return first;
 
   if (isAuthEndpoint(toUrlString(input))) return first;

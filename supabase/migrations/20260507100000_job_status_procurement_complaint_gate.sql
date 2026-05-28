@@ -1,0 +1,398 @@
+-- Gate prelaska iz „Čeka materijal“ u „U proizvodnji“: sve narudžbine moraju biti primljene
+-- (material_order_delivery_resolved) i ne sme postojati aktivna reklamacija nabavke za posao.
+-- Posle rešavanja reklamacije, recompute_job_status preko update_procurement_complaint_status.
+
+CREATE OR REPLACE FUNCTION public.job_has_active_procurement_complaints(p_job_id uuid)
+RETURNS boolean
+LANGUAGE sql
+STABLE
+SECURITY DEFINER
+SET search_path TO public
+AS $chk$
+  SELECT EXISTS (
+    SELECT 1
+    FROM public.procurement_complaints pc
+    INNER JOIN public.material_orders mo ON mo.id = pc.order_id
+    WHERE mo.job_id = p_job_id
+      AND pc.status IN ('urgent_pending', 'awaiting_supplier_response')
+  );
+$chk$;
+
+REVOKE ALL ON FUNCTION public.job_has_active_procurement_complaints(uuid) FROM PUBLIC;
+GRANT EXECUTE ON FUNCTION public.job_has_active_procurement_complaints(uuid) TO authenticated;
+GRANT EXECUTE ON FUNCTION public.job_has_active_procurement_complaints(uuid) TO service_role;
+
+COMMENT ON FUNCTION public.job_has_active_procurement_complaints(uuid) IS
+  'Za aplikacioni recompute kad RLS blokira procurement_complaints (npr. office uloga).';
+
+CREATE OR REPLACE FUNCTION public.recompute_job_status(p_job_id uuid)
+RETURNS TABLE (
+  did_update boolean,
+  previous_status public.job_status,
+  next_status public.job_status
+)
+LANGUAGE plpgsql
+SECURITY DEFINER
+SET search_path TO public
+AS $func$
+DECLARE
+  v_current public.job_status;
+  v_locked boolean;
+  v_next public.job_status;
+  v_has_meas boolean;
+  v_meas_unfinished boolean;
+  v_meas_phase_done boolean;
+  v_measurement_completed boolean;
+  v_meas_in_progress boolean;
+  v_has_prod boolean;
+  v_prod_unfinished boolean;
+  v_prod_done boolean;
+  v_prod_done_effective boolean;
+  v_has_inst boolean;
+  v_inst_unfinished boolean;
+  v_inst_job_done boolean;
+  v_inst_in_progress boolean;
+  v_install_all_pending boolean;
+  v_scheduled boolean;
+  v_in_production boolean;
+  v_has_accepted_quote boolean;
+  v_has_material_order boolean;
+  v_all_materials_delivered boolean;
+  v_has_active_procurement_complaints boolean;
+BEGIN
+  SELECT j.status, COALESCE(j.status_locked, false)
+  INTO v_current, v_locked
+  FROM public.jobs j
+  WHERE j.id = p_job_id
+  FOR UPDATE;
+
+  IF NOT FOUND THEN
+    RAISE EXCEPTION 'job not found: %', p_job_id;
+  END IF;
+
+  IF v_locked OR v_current IN (
+    'service'::public.job_status,
+    'quote_sent'::public.job_status,
+    'final_quote_sent'::public.job_status
+  ) THEN
+    BEGIN
+      PERFORM public.ensure_workflow_work_orders(p_job_id);
+    EXCEPTION WHEN OTHERS THEN
+      RAISE WARNING 'ensure_workflow_work_orders (early exit): %', SQLERRM;
+    END;
+    RETURN QUERY VALUES (false::boolean, v_current::public.job_status, v_current::public.job_status);
+    RETURN;
+  END IF;
+
+  IF v_current = 'complaint'::public.job_status THEN
+    BEGIN
+      PERFORM public.ensure_workflow_work_orders(p_job_id);
+    EXCEPTION WHEN OTHERS THEN
+      RAISE WARNING 'ensure_workflow_work_orders (complaint exit): %', SQLERRM;
+    END;
+    RETURN QUERY VALUES (false::boolean, v_current::public.job_status, v_current::public.job_status);
+    RETURN;
+  END IF;
+
+  IF v_current = 'installation_problem'::public.job_status THEN
+    BEGIN
+      PERFORM public.ensure_workflow_work_orders(p_job_id);
+    EXCEPTION WHEN OTHERS THEN
+      RAISE WARNING 'ensure_workflow_work_orders (installation_problem exit): %', SQLERRM;
+    END;
+    RETURN QUERY VALUES (false::boolean, v_current::public.job_status, v_current::public.job_status);
+    RETURN;
+  END IF;
+
+  v_has_meas := EXISTS (
+    SELECT 1
+    FROM public.work_orders w
+    WHERE w.job_id = p_job_id
+      AND w.type IN (
+        'measurement'::public.work_order_type,
+        'measurement_verification'::public.work_order_type
+      )
+  );
+
+  v_meas_unfinished := EXISTS (
+    SELECT 1
+    FROM public.work_orders w
+    WHERE w.job_id = p_job_id
+      AND w.type IN (
+        'measurement'::public.work_order_type,
+        'measurement_verification'::public.work_order_type
+      )
+      AND w.status NOT IN ('completed'::public.work_order_status, 'canceled'::public.work_order_status)
+  );
+
+  v_has_prod := EXISTS (
+    SELECT 1
+    FROM public.work_orders w
+    WHERE w.job_id = p_job_id AND w.type = 'production'::public.work_order_type
+  );
+
+  v_meas_phase_done :=
+    (v_has_meas AND NOT v_meas_unfinished)
+    OR ((NOT v_has_meas) AND v_has_prod);
+
+  v_measurement_completed := v_has_meas AND NOT v_meas_unfinished;
+
+  v_meas_in_progress := EXISTS (
+    SELECT 1
+    FROM public.work_orders w
+    WHERE w.job_id = p_job_id
+      AND w.type IN (
+        'measurement'::public.work_order_type,
+        'measurement_verification'::public.work_order_type
+      )
+      AND w.status = 'in_progress'::public.work_order_status
+  );
+
+  v_prod_unfinished := EXISTS (
+    SELECT 1
+    FROM public.work_orders w
+    WHERE w.job_id = p_job_id
+      AND w.type = 'production'::public.work_order_type
+      AND w.status NOT IN ('completed'::public.work_order_status, 'canceled'::public.work_order_status)
+  );
+
+  v_prod_done :=
+    v_has_prod
+    AND NOT v_prod_unfinished
+    AND EXISTS (
+      SELECT 1
+      FROM public.work_orders w
+      WHERE w.job_id = p_job_id
+        AND w.type = 'production'::public.work_order_type
+        AND w.status = 'completed'::public.work_order_status
+    );
+
+  v_prod_done_effective := (NOT v_has_prod) OR v_prod_done;
+
+  v_has_inst := EXISTS (
+    SELECT 1
+    FROM public.work_orders w
+    WHERE w.job_id = p_job_id AND w.type = 'installation'::public.work_order_type
+  );
+
+  v_inst_unfinished := EXISTS (
+    SELECT 1
+    FROM public.work_orders w
+    WHERE w.job_id = p_job_id
+      AND w.type = 'installation'::public.work_order_type
+      AND w.status NOT IN ('completed'::public.work_order_status, 'canceled'::public.work_order_status)
+  );
+
+  v_inst_job_done :=
+    v_has_inst
+    AND NOT v_inst_unfinished
+    AND EXISTS (
+      SELECT 1
+      FROM public.work_orders w
+      WHERE w.job_id = p_job_id
+        AND w.type = 'installation'::public.work_order_type
+        AND w.status = 'completed'::public.work_order_status
+    );
+
+  v_inst_in_progress := EXISTS (
+    SELECT 1
+    FROM public.work_orders w
+    WHERE w.job_id = p_job_id
+      AND w.type = 'installation'::public.work_order_type
+      AND w.status = 'in_progress'::public.work_order_status
+  );
+
+  v_install_all_pending :=
+    v_has_inst
+    AND NOT EXISTS (
+      SELECT 1
+      FROM public.work_orders w
+      WHERE w.job_id = p_job_id
+        AND w.type = 'installation'::public.work_order_type
+        AND w.status IS DISTINCT FROM 'pending'::public.work_order_status
+    );
+
+  v_has_accepted_quote := EXISTS (
+    SELECT 1
+    FROM public.quotes q
+    WHERE q.job_id = p_job_id
+      AND q.status = 'accepted'::public.quote_status
+  );
+
+  v_has_material_order := EXISTS (
+    SELECT 1
+    FROM public.material_orders mo
+    WHERE mo.job_id = p_job_id
+  );
+
+  v_all_materials_delivered :=
+    v_has_material_order
+    AND NOT EXISTS (
+      SELECT 1
+      FROM public.material_orders mo
+      WHERE mo.job_id = p_job_id
+        AND NOT public.material_order_delivery_resolved(mo.delivery_status)
+    );
+
+  v_has_active_procurement_complaints := public.job_has_active_procurement_complaints(p_job_id);
+
+  v_scheduled :=
+    v_meas_phase_done
+    AND v_prod_done_effective
+    AND (
+      (v_has_inst AND v_install_all_pending)
+      OR ((NOT v_has_inst) AND v_has_prod AND v_prod_done)
+    );
+
+  v_in_production :=
+    v_meas_phase_done
+    AND (
+      NOT v_has_material_order
+      OR (v_all_materials_delivered AND NOT v_has_active_procurement_complaints)
+    )
+    AND NOT v_meas_in_progress
+    AND NOT v_scheduled
+    AND NOT v_inst_in_progress
+    AND NOT v_inst_job_done;
+
+  IF EXISTS (
+    SELECT 1
+    FROM public.field_reports fr
+    INNER JOIN public.work_orders w ON w.id = fr.work_order_id
+    INNER JOIN public.jobs j ON j.id = w.job_id
+    WHERE w.job_id = p_job_id
+      AND w.type = 'installation'::public.work_order_type
+      AND w.status = 'completed'::public.work_order_status
+      AND fr.everything_ok IS FALSE
+      AND j.first_completed_at IS NULL
+  ) THEN
+    v_next := 'installation_problem'::public.job_status;
+  ELSIF v_inst_job_done THEN
+    v_next := 'completed'::public.job_status;
+  ELSIF v_inst_in_progress THEN
+    v_next := 'installation_in_progress'::public.job_status;
+  ELSIF v_has_meas AND NOT v_meas_phase_done THEN
+    v_next := 'measuring'::public.job_status;
+  ELSIF v_current = 'measuring'::public.job_status AND v_measurement_completed THEN
+    v_next := 'measurement_processing'::public.job_status;
+  ELSIF v_measurement_completed AND NOT v_has_accepted_quote THEN
+    v_next := 'measurement_processing'::public.job_status;
+  ELSIF v_measurement_completed AND v_has_material_order AND NOT v_all_materials_delivered THEN
+    v_next := 'waiting_material'::public.job_status;
+  ELSIF v_measurement_completed AND v_has_material_order AND v_all_materials_delivered AND v_has_active_procurement_complaints THEN
+    v_next := 'waiting_material'::public.job_status;
+  ELSIF v_measurement_completed AND v_has_accepted_quote AND NOT v_has_material_order THEN
+    v_next := 'ready_for_work'::public.job_status;
+  ELSIF v_scheduled THEN
+    v_next := 'scheduled'::public.job_status;
+  ELSIF v_in_production THEN
+    v_next := 'in_production'::public.job_status;
+  ELSE
+    v_next := 'new'::public.job_status;
+  END IF;
+
+  IF v_next IS NOT DISTINCT FROM v_current THEN
+    BEGIN
+      PERFORM public.ensure_workflow_work_orders(p_job_id);
+    EXCEPTION WHEN OTHERS THEN
+      RAISE WARNING 'ensure_workflow_work_orders (no status change): %', SQLERRM;
+    END;
+    RETURN QUERY VALUES (false::boolean, v_current::public.job_status, v_current::public.job_status);
+    RETURN;
+  END IF;
+
+  UPDATE public.jobs
+  SET status = v_next
+  WHERE id = p_job_id;
+
+  BEGIN
+    PERFORM public.ensure_workflow_work_orders(p_job_id);
+  EXCEPTION WHEN OTHERS THEN
+    RAISE WARNING 'ensure_workflow_work_orders (after status update): %', SQLERRM;
+  END;
+
+  RETURN QUERY VALUES (true::boolean, v_current::public.job_status, v_next::public.job_status);
+END;
+$func$;
+
+REVOKE ALL ON FUNCTION public.recompute_job_status(uuid) FROM PUBLIC;
+GRANT EXECUTE ON FUNCTION public.recompute_job_status(uuid) TO authenticated;
+GRANT EXECUTE ON FUNCTION public.recompute_job_status(uuid) TO service_role;
+
+CREATE OR REPLACE FUNCTION public.update_procurement_complaint_status(
+  p_complaint_id uuid,
+  p_status text
+)
+RETURNS boolean
+LANGUAGE plpgsql
+SECURITY DEFINER
+SET search_path = public
+AS $fn$
+DECLARE
+  n int;
+  v_order_id uuid;
+  v_active_count int;
+  v_job_id uuid;
+BEGIN
+  IF auth.uid() IS NULL THEN
+    RAISE EXCEPTION 'Morate biti prijavljeni';
+  END IF;
+  IF public.get_current_user_role() IS NULL
+     OR public.get_current_user_role() NOT IN ('admin'::public.user_role, 'procurement'::public.user_role) THEN
+    RAISE EXCEPTION 'Nemate dozvolu';
+  END IF;
+
+  IF p_status IS NULL OR trim(p_status) = '' THEN
+    RAISE EXCEPTION 'Status je obavezan';
+  END IF;
+
+  IF trim(p_status) NOT IN (
+    'urgent_pending',
+    'awaiting_supplier_response',
+    'refunded_credit_note',
+    'resolved_items_replaced'
+  ) THEN
+    RAISE EXCEPTION 'Nepoznat status reklamacije';
+  END IF;
+
+  UPDATE public.procurement_complaints
+  SET status = trim(p_status)
+  WHERE id = p_complaint_id;
+
+  GET DIAGNOSTICS n = ROW_COUNT;
+
+  IF n > 0 THEN
+    SELECT order_id INTO v_order_id
+    FROM public.procurement_complaints
+    WHERE id = p_complaint_id;
+
+    IF v_order_id IS NOT NULL THEN
+      SELECT COUNT(*) INTO v_active_count
+      FROM public.procurement_complaints
+      WHERE order_id = v_order_id
+        AND status IN ('urgent_pending', 'awaiting_supplier_response');
+
+      IF v_active_count = 0 THEN
+        UPDATE public.material_orders
+        SET delivery_status = 'materials_received'
+        WHERE id = v_order_id
+          AND delivery_status = 'received_with_issues';
+      END IF;
+
+      SELECT mo.job_id INTO v_job_id
+      FROM public.material_orders mo
+      WHERE mo.id = v_order_id;
+
+      IF v_job_id IS NOT NULL THEN
+        BEGIN
+          PERFORM public.recompute_job_status(v_job_id);
+        EXCEPTION WHEN OTHERS THEN
+          RAISE WARNING 'recompute_job_status posle izmene reklamacije: %', SQLERRM;
+        END;
+      END IF;
+    END IF;
+  END IF;
+
+  RETURN n > 0;
+END;
+$fn$;

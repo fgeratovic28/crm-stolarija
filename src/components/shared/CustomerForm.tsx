@@ -15,6 +15,8 @@ const customerSchema = z
     contactPerson: z.string().trim().min(1, "Kontakt osoba je obavezna"),
     billingAddress: z.string().trim().min(1, "Adresa za fakturisanje je obavezna"),
     installationAddress: z.string().trim().min(1, "Adresa ugradnje je obavezna"),
+    installationApartment: z.string().optional(),
+    installationFloor: z.string().optional(),
     phones: z.array(z.object({ value: z.string() })).min(1, "Bar jedan red za telefon"),
     emails: z.array(z.object({ value: z.string() })).min(1, "Bar jedan red za email"),
     pib: z.string().trim().optional(),
@@ -68,6 +70,8 @@ export function CustomerForm({ initialData, onSubmit, onCancel, isLoading }: Cus
       contactPerson: initialData?.contactPerson || "",
       billingAddress: initialData?.billingAddress || "",
       installationAddress: initialData?.installationAddress || "",
+      installationApartment: initialData?.installationApartment || "",
+      installationFloor: initialData?.installationFloor || "",
       phones: initialData?.phones?.length ? initialData.phones.map(p => ({ value: p })) : [{ value: "" }],
       emails: initialData?.emails?.length ? initialData.emails.map(e => ({ value: e })) : [{ value: "" }],
       pib: initialData?.pib || "",
@@ -184,6 +188,22 @@ export function CustomerForm({ initialData, onSubmit, onCancel, isLoading }: Cus
               <FormMessage />
             </FormItem>
           )} />
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+            <FormField control={form.control} name="installationFloor" render={({ field }) => (
+              <FormItem>
+                <FormLabel>Sprat (opciono)</FormLabel>
+                <FormControl><Input placeholder="npr. 3" {...field} /></FormControl>
+                <FormMessage />
+              </FormItem>
+            )} />
+            <FormField control={form.control} name="installationApartment" render={({ field }) => (
+              <FormItem>
+                <FormLabel>Stan (opciono)</FormLabel>
+                <FormControl><Input placeholder="npr. 12" {...field} /></FormControl>
+                <FormMessage />
+              </FormItem>
+            )} />
+          </div>
         </div>
 
         <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">

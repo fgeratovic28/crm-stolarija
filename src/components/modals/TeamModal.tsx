@@ -1,11 +1,11 @@
-import { useState, useEffect } from "react";
-import { 
-  Dialog, 
-  DialogContent, 
-  DialogHeader, 
-  DialogTitle, 
+import { useState, useEffect, useMemo } from "react";
+import {
+  Dialog,
+  DialogContent,
+  DialogHeader,
+  DialogTitle,
   DialogFooter,
-  DialogDescription
+  DialogDescription,
 } from "@/components/ui/dialog";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -15,6 +15,7 @@ import { Checkbox } from "@/components/ui/checkbox";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { Team, ROLE_CONFIG, type UserRole } from "@/types";
 import { useUsers } from "@/hooks/use-users";
+import { useToast } from "@/hooks/use-toast";
 
 interface TeamModalProps {
   isOpen: boolean;
@@ -23,88 +24,127 @@ interface TeamModalProps {
   team?: Team;
 }
 
-const TEAM_SPECIALTIES = [
-  "Montaža",
-  "Servis",
-  "Merenje",
-  "Reklamacije",
-  "Kontrolna poseta",
-] as const;
+const FIELD_TEAM_ROLES: UserRole[] = ["montaza", "teren", "production"];
 
 export function TeamModal({ isOpen, onClose, onSave, team }: TeamModalProps) {
+  const { toast } = useToast();
   const { users, isLoading: usersLoading } = useUsers();
   const [formData, setFormData] = useState<(Omit<Team, "id"> | Team) & { memberIds: string[] }>({
     name: "",
     contactPhone: "",
-    specialty: "",
+    fieldRoleLabel: "—",
     active: true,
     members: [],
-    memberIds: []
+    memberIds: [],
   });
 
   useEffect(() => {
     if (team && isOpen) {
-      // Find IDs of existing members based on names (since members in Team are names currently)
-      // BUT it's better to fetch user IDs directly from DB.
-      // For now, let's assume we need to find them from the `users` list.
-      const teamMemberIds = users
-        ?.filter(u => u.teamId === team.id)
-        .map(u => u.id) || [];
+      const teamMemberIds = users?.filter((u) => u.teamId === team.id).map((u) => u.id) || [];
 
       setFormData({
         ...team,
-        specialty: team.specialty || "",
-        memberIds: teamMemberIds
+        memberIds: teamMemberIds,
       });
     } else if (isOpen) {
       setFormData({
         name: "",
         contactPhone: "",
-        specialty: "",
+        fieldRoleLabel: "—",
         active: true,
         members: [],
-        memberIds: []
+        memberIds: [],
       });
     }
   }, [team, isOpen, users]);
 
+  const lockedRole = useMemo((): UserRole | null => {
+    if (formData.memberIds.length === 0) return null;
+    const first = users?.find((u) => u.id === formData.memberIds[0]);
+    const r = first?.role;
+    return r && FIELD_TEAM_ROLES.includes(r) ? r : null;
+  }, [formData.memberIds, users]);
+
+  const fieldUsers =
+    users?.filter((u) => u.role && FIELD_TEAM_ROLES.includes(u.role as UserRole)) || [];
+
+  const selectableUsers = useMemo(() => {
+    return fieldUsers.filter((u) => {
+      if (formData.memberIds.includes(u.id)) return true;
+      if (lockedRole) return u.role === lockedRole;
+      return true;
+    });
+  }, [fieldUsers, formData.memberIds, lockedRole]);
+
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
+    const ids = formData.memberIds;
+    if (ids.length > 0) {
+      const picked = ids.map((id) => users?.find((u) => u.id === id)).filter(Boolean) as NonNullable<
+        (typeof users)[number]
+      >[];
+      const roles = picked.map((u) => u.role).filter((r): r is UserRole => r != null);
+      if (roles.length !== picked.length) {
+        toast({
+          title: "Greška",
+          description: "Svi izabrani članovi moraju imati dodeljenu ulogu.",
+          variant: "destructive",
+        });
+        return;
+      }
+      if (!roles.every((r) => FIELD_TEAM_ROLES.includes(r))) {
+        toast({
+          title: "Greška",
+          description: "U timu mogu biti samo uloge Montaža, Teren ili Proizvodnja.",
+          variant: "destructive",
+        });
+        return;
+      }
+      const first = roles[0];
+      if (!roles.every((r) => r === first)) {
+        toast({
+          title: "Greška",
+          description: "U istom timu mogu biti samo korisnici sa istom ulogom.",
+          variant: "destructive",
+        });
+        return;
+      }
+    }
     onSave(formData);
     onClose();
   };
 
   const toggleMember = (userId: string) => {
-    setFormData(prev => {
-      const isSelected = prev.memberIds.includes(userId);
-      const newMemberIds = isSelected
-        ? prev.memberIds.filter(id => id !== userId)
-        : [...prev.memberIds, userId];
-      
-      return { ...prev, memberIds: newMemberIds };
-    });
-  };
-
-  const selectedSpecialties = formData.specialty
-    ?.split(",")
-    .map((value) => value.trim())
-    .filter(Boolean) ?? [];
-
-  const toggleSpecialty = (specialty: string) => {
     setFormData((prev) => {
-      const current = prev.specialty
-        ?.split(",")
-        .map((value) => value.trim())
-        .filter(Boolean) ?? [];
-      const next = current.includes(specialty)
-        ? current.filter((item) => item !== specialty)
-        : [...current, specialty];
-      return { ...prev, specialty: next.join(", ") };
+      const isSelected = prev.memberIds.includes(userId);
+      if (isSelected) {
+        return { ...prev, memberIds: prev.memberIds.filter((id) => id !== userId) };
+      }
+      const user = users?.find((u) => u.id === userId);
+      const role = user?.role;
+      if (!role || !FIELD_TEAM_ROLES.includes(role as UserRole)) {
+        toast({
+          title: "Greška",
+          description: "Ovaj korisnik nema ulogu pogodnu za terenski tim.",
+          variant: "destructive",
+        });
+        return prev;
+      }
+      if (prev.memberIds.length > 0) {
+        const anchor = users?.find((u) => u.id === prev.memberIds[0]);
+        const anchorRole = anchor?.role;
+        if (anchorRole && anchorRole !== role) {
+          toast({
+            title: "Greška",
+            description: "Možete dodati samo korisnike sa istom ulogom kao postojeći članovi tima.",
+            variant: "destructive",
+          });
+          return prev;
+        }
+      }
+      return { ...prev, memberIds: [...prev.memberIds, userId] };
     });
   };
-
-  const fieldUsers =
-    users?.filter((u) => u.role === "montaza" || u.role === "teren" || u.role === "production") || [];
 
   return (
     <Dialog open={isOpen} onOpenChange={onClose}>
@@ -112,10 +152,14 @@ export function TeamModal({ isOpen, onClose, onSave, team }: TeamModalProps) {
         <DialogHeader>
           <DialogTitle className="px-4 pt-6 sm:px-6">{team ? "Izmeni tim" : "Dodaj novi tim"}</DialogTitle>
           <DialogDescription className="px-4 sm:px-6">
-            Unesite detalje o timu ispod. Kliknite na sačuvaj kada završite.
+            Unesite detalje o timu ispod. Uloga tima određuje se automatski iz uloga članova (svi moraju imati istu
+            ulogu). Kliknite na sačuvaj kada završite.
           </DialogDescription>
         </DialogHeader>
-        <form onSubmit={handleSubmit} className="flex max-h-[min(75dvh,calc(100dvh-10rem))] flex-col overflow-hidden">
+        <form
+          onSubmit={handleSubmit}
+          className="flex max-h-[min(75dvh,calc(100dvh-10rem))] flex-col overflow-hidden"
+        >
           <div className="min-h-0 flex-1 space-y-4 overflow-y-auto px-4 py-4 sm:px-6">
             <div className="grid gap-4 sm:grid-cols-2">
               <div className="grid gap-2">
@@ -141,30 +185,15 @@ export function TeamModal({ isOpen, onClose, onSave, team }: TeamModalProps) {
             </div>
 
             <div className="grid gap-2">
-              <Label>Specijalnost</Label>
-              <div className="rounded-md border p-3">
-                <div className="grid gap-2 sm:grid-cols-2">
-                  {TEAM_SPECIALTIES.map((specialty) => (
-                    <div key={specialty} className="flex items-center space-x-2">
-                      <Checkbox
-                        id={`specialty-${specialty}`}
-                        checked={selectedSpecialties.includes(specialty)}
-                        onCheckedChange={() => toggleSpecialty(specialty)}
-                      />
-                      <Label htmlFor={`specialty-${specialty}`} className="text-sm font-normal cursor-pointer">
-                        {specialty}
-                      </Label>
-                    </div>
-                  ))}
-                </div>
-              </div>
-            </div>
-
-            <div className="grid gap-2">
               <Label>Članovi tima (Montaža / Teren / Proizvodnja)</Label>
+              {lockedRole && (
+                <p className="text-xs text-muted-foreground">
+                  Prikazani su korisnici uloge „{ROLE_CONFIG[lockedRole].label}” (isti tim = ista uloga).
+                </p>
+              )}
               <ScrollArea className="h-36 rounded-md border p-2">
                 <div className="space-y-2">
-                  {fieldUsers.map((user) => (
+                  {selectableUsers.map((user) => (
                     <div key={user.id} className="flex items-center space-x-2">
                       <Checkbox
                         id={`user-${user.id}`}
@@ -177,13 +206,15 @@ export function TeamModal({ isOpen, onClose, onSave, team }: TeamModalProps) {
                       >
                         <span className="truncate">{user.name}</span>
                         <span className="text-xs text-muted-foreground italic shrink-0">
-                          {ROLE_CONFIG[user.role as UserRole]?.label ?? user.role}
+                          {user.role ? ROLE_CONFIG[user.role as UserRole]?.label ?? user.role : "—"}
                         </span>
                       </Label>
                     </div>
                   ))}
-                  {fieldUsers.length === 0 && !usersLoading && (
-                    <p className="text-xs text-muted-foreground p-2">Nema dostupnih korisnika za tim (montaža/teren/proizvodnja).</p>
+                  {selectableUsers.length === 0 && !usersLoading && (
+                    <p className="text-xs text-muted-foreground p-2">
+                      Nema dostupnih korisnika za tim (montaža/teren/proizvodnja).
+                    </p>
                   )}
                 </div>
               </ScrollArea>

@@ -21,7 +21,7 @@ export type CompletedJobMapItem = {
   } | null;
 };
 
-function mapCompletedJobRow(row: Record<string, unknown>, hasCoordinates: boolean): Omit<CompletedJobMapItem, "location"> & {
+function mapCompletedJobRow(row: Record<string, unknown>): Omit<CompletedJobMapItem, "location"> & {
   _lat?: number | null;
   _lng?: number | null;
 } {
@@ -29,8 +29,8 @@ function mapCompletedJobRow(row: Record<string, unknown>, hasCoordinates: boolea
   const customer = Array.isArray(customerRaw) ? customerRaw[0] : customerRaw;
   const installationAddress = typeof row.installation_address === "string" ? row.installation_address : undefined;
 
-  const rawLat = hasCoordinates ? row.installation_lat : null;
-  const rawLng = hasCoordinates ? row.installation_lng : null;
+  const rawLat = row.installation_lat;
+  const rawLng = row.installation_lng;
   const lat = rawLat === null || rawLat === undefined || rawLat === "" ? Number.NaN : Number(rawLat);
   const lng = rawLng === null || rawLng === undefined || rawLng === "" ? Number.NaN : Number(rawLng);
   const hasStoredCoordinates = Number.isFinite(lat) && Number.isFinite(lng);
@@ -51,67 +51,45 @@ function mapCompletedJobRow(row: Record<string, unknown>, hasCoordinates: boolea
   };
 }
 
-async function loadCompletedJobsRows() {
-  const selectWithCoords = `
-    id,
-    job_number,
-    status,
-    summary,
-    created_at,
-    status_changed_at,
-    installation_address,
-    billing_address,
-    customer_phone,
-    installation_lat,
-    installation_lng,
+/**
+ * Completed jobs map: prefer `*` so remote DB schema never rejects unknown explicit columns (400).
+ * Nested selects use columns that actually exist on the server.
+ */
+async function loadCompletedJobsRows(): Promise<Record<string, unknown>[]> {
+  const merged = `
+    *,
     customers (name)
   `;
 
-  const withCoords = await supabase
+  const primary = await supabase
     .from("jobs")
-    .select(selectWithCoords)
+    .select(merged)
     .eq("status", "completed")
-    .order("status_changed_at", { ascending: false });
+    .order("created_at", { ascending: false });
 
-  if (!withCoords.error) {
-    return {
-      rows: (withCoords.data ?? []) as Record<string, unknown>[],
-      hasCoordinates: true,
-    };
+  if (!primary.error) {
+    return (primary.data ?? []) as Record<string, unknown>[];
   }
 
-  const selectLegacy = `
-    id,
-    job_number,
-    status,
-    summary,
-    created_at,
-    status_changed_at,
-    installation_address,
-    billing_address,
-    customer_phone,
-    customers (name)
-  `;
-
-  const legacy = await supabase
+  const noCustomerEmbed = await supabase
     .from("jobs")
-    .select(selectLegacy)
+    .select("*")
     .eq("status", "completed")
-    .order("status_changed_at", { ascending: false });
+    .order("created_at", { ascending: false });
 
-  if (legacy.error) throw legacy.error;
-  return {
-    rows: (legacy.data ?? []) as Record<string, unknown>[],
-    hasCoordinates: false,
-  };
+  if (!noCustomerEmbed.error) {
+    return (noCustomerEmbed.data ?? []) as Record<string, unknown>[];
+  }
+
+  throw noCustomerEmbed.error;
 }
 
 export function useCompletedJobsMap() {
   return useQuery({
     queryKey: ["completed-jobs-map"],
     queryFn: async () => {
-      const { rows, hasCoordinates } = await loadCompletedJobsRows();
-      const mapped = rows.map((row) => mapCompletedJobRow(row, hasCoordinates));
+      const rows = await loadCompletedJobsRows();
+      const mapped = rows.map((row) => mapCompletedJobRow(row));
 
       const withLocations = await Promise.all(
         mapped.map(async (job) => {

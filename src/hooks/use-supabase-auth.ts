@@ -1,7 +1,6 @@
 import { useCallback, useEffect, useRef } from "react";
 import { useQueryClient } from "@tanstack/react-query";
 import type { Session } from "@supabase/supabase-js";
-import { markRichSplashCompleted } from "@/lib/rich-splash-session";
 import { syncAppSettingsCacheFromSupabase } from "@/lib/app-settings";
 import { authStorageKey, persistAuthSession, supabase } from "@/lib/supabase";
 import { useAuthStore, type AccessBlockReason } from "@/stores/auth-store";
@@ -12,8 +11,8 @@ import { AppUser, UserRole } from "@/types";
 const SESSION_RESOLVE_MS = 2_200;
 /** Hard limit za prvi ekran učitavanja ("Provera veze sa serverom"). */
 const AUTH_READY_WATCHDOG_MS = 5_000;
-/** Profil iz DB ne sme da drži početni loading duže od 5s. */
-const PROFILE_FETCH_MS = 5_000;
+/** Profil iz DB ne sme da drži početni loading dugo pri sporijoj vezi uz Supabase API. */
+const PROFILE_FETCH_MS = 14_000;
 /** Debounce za evente (focus/visibility/online) da izbegnemo duple getSession pozive. */
 const SESSION_RECHECK_DEBOUNCE_MS = 1_500;
 
@@ -515,7 +514,6 @@ export function useSupabaseAuth() {
         // Čim znamo ishod getSession, pusti UI — ne čekaj profil niti retry granu (sprečava „Provera sesije” zauvek).
         clearTimeout(watchdog);
         setAuthReady(true);
-        markRichSplashCompleted();
 
         if (error) {
           console.error("Auth getSession on mount:", error);
@@ -582,7 +580,6 @@ export function useSupabaseAuth() {
           setUser(null);
           clearQueryCacheOnLogout();
           setAuthReady(true);
-          markRichSplashCompleted();
         }
       }
     })();

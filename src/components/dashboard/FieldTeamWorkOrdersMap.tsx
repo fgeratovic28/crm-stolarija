@@ -1,4 +1,5 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useState, type MouseEvent } from "react";
+import { Link } from "react-router-dom";
 import { MapContainer, Marker, Popup, TileLayer, useMap } from "react-leaflet";
 import MarkerClusterGroup from "react-leaflet-cluster";
 import { divIcon, type LatLngTuple } from "leaflet";
@@ -6,8 +7,7 @@ import L from "leaflet";
 import "leaflet/dist/leaflet.css";
 import "leaflet.markercluster/dist/MarkerCluster.Default.css";
 import "leaflet.markercluster/dist/MarkerCluster.css";
-import { format } from "date-fns";
-import { sr } from "date-fns/locale";
+import { formatFieldTeamWorkOrderScheduleDisplay } from "@/lib/schedule-datetime-display";
 import {
   MapPin,
   Navigation,
@@ -25,10 +25,16 @@ import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "@/component
 import { useToast } from "@/hooks/use-toast";
 import type { FieldTeamWorkOrder } from "@/hooks/use-field-team-data";
 import { distanceKm, useFieldTeamMapMarkers, type FieldTeamMapMarker } from "@/hooks/use-field-team-map";
-import { labelWorkOrderType } from "@/lib/activity-labels";
+import { labelWorkOrderStatus } from "@/lib/activity-labels";
+import { workOrderStatusBadgeClassName } from "@/lib/work-order-status-badge";
 import { MAP_TILE_ATTRIBUTION, MAP_TILE_SUBDOMAINS, MAP_TILE_URL } from "@/lib/map-tiles";
 import { cn } from "@/lib/utils";
+import { formatWorkOrderDescriptionForWorker } from "@/lib/work-order-description-display";
 import { jobPrimaryPhone } from "@/lib/job-contact-phone";
+import {
+  getFieldTeamWorkOrderAddress,
+  getFieldTeamWorkOrderStreetForMaps,
+} from "@/lib/field-team-work-order-display";
 
 const defaultCenter: LatLngTuple = [44.7866, 20.4489];
 
@@ -57,12 +63,36 @@ function FitBounds({
 }) {
   const map = useMap();
   useEffect(() => {
-    const pts: LatLngTuple[] = [...markerPositions];
-    if (userPos) pts.push(userPos);
-    if (pts.length === 0) return;
-    const b = L.latLngBounds(pts);
+    if (markerPositions.length === 0) {
+      if (!userPos) return;
+      map.setView(userPos, 13);
+      return;
+    }
+
+    const b = L.latLngBounds(markerPositions);
+    if (userPos) {
+      const userLatLng = L.latLng(userPos[0], userPos[1]);
+      const center = b.getCenter();
+      // Uključi korisnika u zoom samo ako je blizu naloga — inače mapa „odleti“ na ceo kontinent.
+      if (center.distanceTo(userLatLng) <= 80_000) {
+        b.extend(userLatLng);
+      }
+    }
     map.fitBounds(b, { padding: [40, 40], maxZoom: 15 });
   }, [map, markerPositions, userPos]);
+  return null;
+}
+
+function RefreshMapSize({ open }: { open: boolean }) {
+  const map = useMap();
+  useEffect(() => {
+    if (!open) return;
+    // Leaflet mapa je unutar Collapsible animacije; osveži dimenzije po otvaranju.
+    const t = window.setTimeout(() => {
+      map.invalidateSize();
+    }, 180);
+    return () => window.clearTimeout(t);
+  }, [map, open]);
   return null;
 }
 
@@ -82,6 +112,35 @@ function openDirections(opts: {
   } else {
     window.open(`https://www.google.com/maps/dir/?api=1&destination=${destinationQuery}`, "_blank");
   }
+}
+
+function fieldTeamWorkOrderCustomerLabel(wo: FieldTeamWorkOrder): string {
+  return wo.job?.customer?.fullName?.trim() || wo.job?.jobNumber || "—";
+}
+
+function FieldTeamWorkOrderCustomerLink({
+  wo,
+  className,
+  onClick,
+}: {
+  wo: FieldTeamWorkOrder;
+  className?: string;
+  onClick?: (e: MouseEvent) => void;
+}) {
+  const label = fieldTeamWorkOrderCustomerLabel(wo);
+  if (!wo.job?.id) {
+    return <span className={className}>{label}</span>;
+  }
+  return (
+    <Link
+      to={`/jobs/${wo.job.id}`}
+      className={className}
+      title={label}
+      onClick={onClick}
+    >
+      {label}
+    </Link>
+  );
 }
 
 function getCustomerPhone(wo: FieldTeamWorkOrder): string | undefined {
@@ -211,6 +270,7 @@ export function FieldTeamWorkOrdersMap({ workOrders, onOpenWorkOrder }: FieldTea
               <div className="grid gap-4 lg:grid-cols-[1fr_minmax(260px,320px)]">
             <div className="h-[340px] w-full overflow-hidden rounded-xl border">
               <MapContainer center={mapCenter} zoom={12} scrollWheelZoom className="h-full w-full z-0">
+                <RefreshMapSize open={open} />
                 <TileLayer
                   attribution={MAP_TILE_ATTRIBUTION}
                   url={MAP_TILE_URL}
@@ -253,16 +313,26 @@ export function FieldTeamWorkOrdersMap({ workOrders, onOpenWorkOrder }: FieldTea
               <ScrollArea className="h-[340px] rounded-lg border">
                 <div className="p-2 space-y-2">
                   {sortedMarkers.map((m) => (
-                    <button
+                    <div
                       key={m.workOrder.id}
-                      type="button"
-                      className="w-full rounded-lg border bg-card p-3 text-left text-sm transition-colors hover:bg-muted/50"
+                      role="button"
+                      tabIndex={0}
+                      className="w-full rounded-lg border bg-card p-3 text-left text-sm transition-colors hover:bg-muted/50 cursor-pointer outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2"
                       onClick={() => onOpenWorkOrder(m.workOrder)}
+                      onKeyDown={(e) => {
+                        if (e.key === "Enter" || e.key === " ") {
+                          e.preventDefault();
+                          onOpenWorkOrder(m.workOrder);
+                        }
+                      }}
                     >
                       <div className="flex items-start justify-between gap-2">
                         <div>
-                          <p className="font-semibold text-primary">{m.workOrder.job?.jobNumber}</p>
-                          <p className="text-xs text-muted-foreground">{labelWorkOrderType(m.workOrder.type)}</p>
+                          <FieldTeamWorkOrderCustomerLink
+                            wo={m.workOrder}
+                            className="font-semibold text-primary hover:underline"
+                            onClick={(e) => e.stopPropagation()}
+                          />
                         </div>
                         {m.distanceKm != null && (
                           <Badge variant="secondary" className="shrink-0">
@@ -273,7 +343,7 @@ export function FieldTeamWorkOrdersMap({ workOrders, onOpenWorkOrder }: FieldTea
                         )}
                       </div>
                       <p className="mt-1 line-clamp-2 text-xs text-muted-foreground">
-                        {m.workOrder.job?.installationAddress || "Bez adrese"}
+                        {getFieldTeamWorkOrderAddress(m.workOrder) || "Bez adrese"}
                       </p>
                       <div className="mt-2 flex flex-wrap gap-2">
                         <Button
@@ -286,7 +356,7 @@ export function FieldTeamWorkOrdersMap({ workOrders, onOpenWorkOrder }: FieldTea
                             openDirections({
                               dest: m.coords,
                               origin: userPos,
-                              address: m.workOrder.job?.installationAddress,
+                              address: getFieldTeamWorkOrderStreetForMaps(m.workOrder),
                             });
                           }}
                         >
@@ -300,7 +370,7 @@ export function FieldTeamWorkOrdersMap({ workOrders, onOpenWorkOrder }: FieldTea
                           Detalji
                         </Button>
                       </div>
-                    </button>
+                    </div>
                   ))}
                 </div>
               </ScrollArea>
@@ -336,24 +406,28 @@ function FieldTeamMarkerPopupContent({
   return (
     <div className="min-w-[200px] space-y-2 text-sm">
       <div>
-        <p className="font-semibold">{wo.job?.jobNumber}</p>
-        <p className="text-xs text-muted-foreground">{labelWorkOrderType(wo.type)}</p>
+        <FieldTeamWorkOrderCustomerLink
+          wo={wo}
+          className="font-semibold text-primary hover:underline"
+        />
       </div>
-      <Badge variant={wo.status === "in_progress" ? "default" : "secondary"}>
-        {wo.status === "in_progress" ? "U toku" : "Na čekanju"}
+      <Badge variant="outline" className={workOrderStatusBadgeClassName(wo.status)}>
+        {labelWorkOrderStatus(wo.status)}
       </Badge>
-      <p className="flex items-center gap-1 text-xs text-muted-foreground">
+      <p className="flex items-center gap-1 text-xs text-muted-foreground tabular-nums">
         <Calendar className="h-3 w-3 shrink-0" />
-        {wo.date ? format(new Date(wo.date), "dd.MM.yyyy", { locale: sr }) : "—"}
+        Zakazano: {wo.date ? formatFieldTeamWorkOrderScheduleDisplay(wo) : "—"}
       </p>
-      <p className="text-xs leading-snug">{wo.job?.installationAddress || "Nema adrese"}</p>
+      <p className="text-xs leading-snug">{getFieldTeamWorkOrderAddress(wo) || "Nema adrese"}</p>
       {phone && (
         <a href={`tel:${phone}`} className="flex items-center gap-1 text-xs text-primary">
           <Phone className="h-3 w-3" />
           {phone}
         </a>
       )}
-      <p className="text-xs line-clamp-3 text-muted-foreground">{wo.description || "—"}</p>
+      <p className="text-xs line-clamp-3 text-muted-foreground">
+        {formatWorkOrderDescriptionForWorker(wo.description, wo.type) || "—"}
+      </p>
       <div className="flex flex-wrap gap-2 pt-1">
         <Button size="sm" variant="default" className="h-8" type="button" onClick={onDetails}>
           Detalji naloga
@@ -367,7 +441,7 @@ function FieldTeamMarkerPopupContent({
             openDirections({
               dest: marker.coords,
               origin: userPos,
-              address: marker.workOrder.job?.installationAddress,
+              address: getFieldTeamWorkOrderStreetForMaps(marker.workOrder),
             })
           }
         >

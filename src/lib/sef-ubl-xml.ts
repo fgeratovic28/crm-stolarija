@@ -14,6 +14,9 @@ export type ParsedUblLine = {
 export type ParsedUblDocument = {
   lines: ParsedUblLine[];
   taxExclusiveTotal: number | null;
+  taxInclusiveTotal: number | null;
+  /** Ukupan PDV ako ga XML eksplicitno nosi (TaxTotal ili razlika ukupno vs bez PDV). */
+  documentVatAmount: number | null;
   /** Broj dokumenta ako postoji u XML-u. */
   documentNumber?: string;
 };
@@ -85,19 +88,53 @@ export function parseUblInvoiceLikeXml(xml: string): ParsedUblDocument | null {
   }
 
   let taxExclusiveTotal: number | null = null;
+  let taxInclusiveTotal: number | null = null;
   for (let i = 0; i < candidates.length; i++) {
     if (candidates[i].localName !== "LegalMonetaryTotal") continue;
     const legal = candidates[i];
-    const tax =
-      childrenByLocal(legal, "TaxExclusiveAmount")[0] ||
-      childrenByLocal(legal, "TaxInclusiveAmount")[0] ||
-      childrenByLocal(legal, "LineExtensionAmount")[0];
-    if (tax) {
-      const raw = textOf(tax);
-      const v = parseNum(raw);
-      if (raw) taxExclusiveTotal = v;
+    const excEl = childrenByLocal(legal, "TaxExclusiveAmount")[0];
+    const incEl = childrenByLocal(legal, "TaxInclusiveAmount")[0];
+    const fallbackEl =
+      excEl || incEl || childrenByLocal(legal, "LineExtensionAmount")[0] || childrenByLocal(legal, "PayableAmount")[0];
+    if (excEl) {
+      const raw = textOf(excEl);
+      if (raw) taxExclusiveTotal = parseNum(raw);
+    }
+    if (incEl) {
+      const raw = textOf(incEl);
+      if (raw) taxInclusiveTotal = parseNum(raw);
+    }
+    if (taxExclusiveTotal == null && fallbackEl && !excEl) {
+      const raw = textOf(fallbackEl);
+      if (raw) taxExclusiveTotal = parseNum(raw);
     }
     break;
+  }
+
+  let documentVatAmount: number | null = null;
+  if (
+    taxInclusiveTotal != null &&
+    taxExclusiveTotal != null &&
+    taxInclusiveTotal > 0 &&
+    taxInclusiveTotal + 0.02 >= taxExclusiveTotal
+  ) {
+    documentVatAmount = Math.round((taxInclusiveTotal - taxExclusiveTotal) * 100) / 100;
+    if (documentVatAmount < 0) documentVatAmount = null;
+  }
+  if (documentVatAmount == null) {
+    for (let i = 0; i < candidates.length; i++) {
+      if (candidates[i].localName !== "TaxTotal") continue;
+      const tt = candidates[i];
+      const amt = childrenByLocal(tt, "TaxAmount")[0];
+      if (amt) {
+        const raw = textOf(amt);
+        const v = parseNum(raw);
+        if (raw && v > 0) {
+          documentVatAmount = Math.round(v * 100) / 100;
+          break;
+        }
+      }
+    }
   }
 
   let documentNumber: string | undefined;
@@ -110,5 +147,5 @@ export function parseUblInvoiceLikeXml(xml: string): ParsedUblDocument | null {
     }
   }
 
-  return { lines, taxExclusiveTotal, documentNumber };
+  return { lines, taxExclusiveTotal, taxInclusiveTotal, documentVatAmount, documentNumber };
 }

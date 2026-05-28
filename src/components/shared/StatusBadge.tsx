@@ -4,14 +4,16 @@ import { JOB_STATUS_CONFIG, type JobStatus } from "@/types";
 
 interface StatusBadgeProps {
   status: JobStatus;
+  /** Ako je zadato, prikazuje se ovaj tekst umesto podrazumevanog za status (npr. „Nova ponuda“ za pod-posao). */
+  labelOverride?: string;
   className?: string;
 }
 
-export const StatusBadge = memo(function StatusBadge({ status, className }: StatusBadgeProps) {
+export const StatusBadge = memo(function StatusBadge({ status, labelOverride, className }: StatusBadgeProps) {
   const config = JOB_STATUS_CONFIG[status];
   return (
     <span className={cn("inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium", config.color, className)}>
-      {config.label}
+      {labelOverride ?? config.label}
     </span>
   );
 });

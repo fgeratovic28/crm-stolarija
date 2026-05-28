@@ -31,10 +31,31 @@ export async function upsertSystemActivity({
   };
 
   if (systemKey) {
-    const { error } = await supabase
+    const { data: existingBySystemKey, error: existingBySystemKeyError } = await supabase
       .from("activities")
-      .upsert([row], { onConflict: "job_id,system_key" });
-    if (!error) return;
+      .select("id")
+      .eq("job_id", jobId)
+      .eq("system_key", systemKey)
+      .limit(1);
+    if (existingBySystemKeyError) throw existingBySystemKeyError;
+
+    const existingId = existingBySystemKey?.[0]?.id;
+    if (existingId) {
+      const { error: updateError } = await supabase
+        .from("activities")
+        .update({
+          type,
+          description: normalizedDescription,
+          author_id: authorId,
+          date: date ?? new Date().toISOString(),
+        })
+        .eq("id", existingId);
+      if (updateError) throw updateError;
+      return;
+    }
+
+    const { error: insertWithKeyError } = await supabase.from("activities").insert([row]);
+    if (!insertWithKeyError) return;
   }
 
   const { data: existing, error: existingError } = await supabase
@@ -57,4 +78,9 @@ export async function upsertSystemActivity({
     },
   ]);
   if (insertError) throw insertError;
+}
+
+/** Sistem / automatski unosi počinju prefiksom `[AUTO] ` — vidi upsertSystemActivity. */
+export function isAutomatedActivityDescription(description: string): boolean {
+  return description.trimStart().startsWith("[AUTO] ");
 }
