@@ -1,23 +1,44 @@
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2.49.8";
 import { PutObjectCommand, S3Client } from "npm:@aws-sdk/client-s3@3.735.0";
 
-const BACKUP_TABLES = [
-  "customers",
-  "jobs",
-  "material_orders",
-  "job_items",
-  "quotes",
+/** Fallback ako RPC migracija još nije primenjena na projektu. */
+const BACKUP_TABLES_FALLBACK = [
   "activities",
-  "work_orders",
+  "app_settings",
+  "customers",
   "field_reports",
+  "files",
+  "inbound_email_logs",
+  "invoice_missing_part_secured",
+  "invoice_missing_site_procurement",
+  "job_items",
+  "job_number_counters",
+  "jobs",
+  "material_item_code_memory",
+  "material_orders",
+  "montaze",
   "payments",
+  "procurement_ad_hoc_items",
+  "procurement_complaints",
+  "quotes",
+  "sales_alert_notes",
+  "sales_site_addon_quote_alerts",
+  "suppliers",
+  "teams",
+  "user_notifications",
+  "users",
+  "vehicles",
+  "work_order_items",
+  "work_orders",
+  "worker_sick_leaves",
+  "workers",
 ] as const;
 
 const CORS_HEADERS: Record<string, string> = {
   "Access-Control-Allow-Origin": "*",
   "Access-Control-Allow-Methods": "POST, OPTIONS",
   "Access-Control-Allow-Headers":
-    "authorization, x-client-info, apikey, content-type, x-supabase-api-version, prefer",
+    "authorization, x-client-info, apikey, content-type, x-supabase-api-version, prefer, x-cron-secret",
   "Access-Control-Max-Age": "86400",
 };
 
@@ -58,6 +79,10 @@ function tableToSql(tableName: string, rows: JsonRecord[]): string {
   return `INSERT INTO public.${tableName} SELECT * FROM json_populate_recordset(NULL::public.${tableName}, ${payload}::json);`;
 }
 
+function isMissingTableError(message: string): boolean {
+  return /could not find the table/i.test(message) || /does not exist/i.test(message);
+}
+
 async function fetchAllRows(supabase: any, tableName: string): Promise<JsonRecord[]> {
   const pageSize = 1000;
   const output: JsonRecord[] = [];
@@ -74,6 +99,20 @@ async function fetchAllRows(supabase: any, tableName: string): Promise<JsonRecor
   }
 
   return output;
+}
+
+async function resolveBackupTables(supabase: any): Promise<string[]> {
+  const { data, error } = await supabase.rpc("backup_list_public_tables");
+  if (!error && Array.isArray(data) && data.length > 0) {
+    const names = data
+      .map((row: { tablename?: string } | string) =>
+        typeof row === "string" ? row : (row.tablename ?? ""),
+      )
+      .filter((name): name is string => typeof name === "string" && name.length > 0);
+    if (names.length > 0) return names;
+  }
+
+  return [...BACKUP_TABLES_FALLBACK];
 }
 
 function buildR2Client() {
@@ -97,11 +136,17 @@ function backupFileKey(now: Date): string {
 }
 
 async function ensureAuthorized(req: Request): Promise<boolean> {
+  const cronSecret = Deno.env.get("CRON_SECRET")?.trim();
+  if (cronSecret) {
+    const headerSecret = req.headers.get("x-cron-secret")?.trim();
+    if (headerSecret && headerSecret === cronSecret) return true;
+
+    const token = getBearerToken(req);
+    if (token && token === cronSecret) return true;
+  }
+
   const token = getBearerToken(req);
   if (!token) return false;
-
-  const cronSecret = Deno.env.get("CRON_SECRET")?.trim();
-  if (cronSecret && token === cronSecret) return true;
 
   const supabaseUrl = getEnv("SUPABASE_URL");
   const serviceRoleKey = getEnv("SUPABASE_SERVICE_ROLE_KEY");
@@ -132,17 +177,31 @@ async function runBackup() {
     auth: { persistSession: false, autoRefreshToken: false },
   });
 
+  const tableNames = await resolveBackupTables(supabase);
   const parts: string[] = [];
   let totalRows = 0;
+  const skippedTables: string[] = [];
+
   parts.push("-- Termo Plast CRM SQL backup");
   parts.push(`-- Generated at UTC: ${new Date().toISOString()}`);
+  parts.push(`-- Tables: ${tableNames.length}`);
   parts.push("BEGIN;");
 
-  for (const tableName of BACKUP_TABLES) {
-    const rows = await fetchAllRows(supabase, tableName);
-    totalRows += rows.length;
-    parts.push(`\n-- Table: ${tableName} (rows: ${rows.length})`);
-    parts.push(tableToSql(tableName, rows));
+  for (const tableName of tableNames) {
+    try {
+      const rows = await fetchAllRows(supabase, tableName);
+      totalRows += rows.length;
+      parts.push(`\n-- Table: ${tableName} (rows: ${rows.length})`);
+      parts.push(tableToSql(tableName, rows));
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      if (isMissingTableError(message)) {
+        skippedTables.push(tableName);
+        parts.push(`\n-- Table: ${tableName} (skipped: not in schema)`);
+        continue;
+      }
+      throw error;
+    }
   }
 
   parts.push("\nCOMMIT;");
@@ -160,7 +219,12 @@ async function runBackup() {
     }),
   );
 
-  return { key, totalRows, tableCount: BACKUP_TABLES.length };
+  return {
+    key,
+    totalRows,
+    tableCount: tableNames.length,
+    skippedTables,
+  };
 }
 
 Deno.serve(async (req) => {

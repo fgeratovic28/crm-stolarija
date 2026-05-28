@@ -2,51 +2,85 @@ name: Weekly SQL Backup
 
 on:
   schedule:
+    # Nedelja 02:00 UTC (GitHub Actions koristi UTC; prvi run može kasniti do ~15 min)
     - cron: "0 2 * * 0"
   workflow_dispatch:
+
+concurrency:
+  group: weekly-sql-backup
+  cancel-in-progress: false
 
 jobs:
   trigger-backup:
     runs-on: ubuntu-latest
+    timeout-minutes: 15
     steps:
       - name: Trigger Supabase backup-sql function
         env:
           BACKUP_URL: ${{ secrets.SUPABASE_BACKUP_FUNCTION_URL }}
           CRON_SECRET: ${{ secrets.CRON_SECRET }}
+          SUPABASE_ANON_KEY: ${{ secrets.SUPABASE_ANON_KEY }}
         run: |
-          if [ -z "$BACKUP_URL" ]; then
-            echo "Missing secret: SUPABASE_BACKUP_FUNCTION_URL"
+          set -euo pipefail
+
+          if [ -z "${BACKUP_URL:-}" ]; then
+            echo "::error::Missing GitHub secret SUPABASE_BACKUP_FUNCTION_URL"
+            echo "Postavi na: https://<project>.supabase.co/functions/v1/backup-sql"
             exit 1
           fi
-          if [ -z "$CRON_SECRET" ]; then
-            echo "Missing secret: CRON_SECRET"
+          if [ -z "${CRON_SECRET:-}" ]; then
+            echo "::error::Missing GitHub secret CRON_SECRET (isti kao u Supabase Edge Function secrets)"
             exit 1
           fi
 
-          # Trim whitespace/newlines that are often pasted into GitHub secrets.
           BACKUP_URL="$(echo "$BACKUP_URL" | tr -d '\r\n' | xargs)"
           CRON_SECRET="$(echo "$CRON_SECRET" | tr -d '\r\n' | xargs)"
+          SUPABASE_ANON_KEY="$(echo "${SUPABASE_ANON_KEY:-}" | tr -d '\r\n' | xargs)"
 
           if ! echo "$BACKUP_URL" | grep -Eq '^https?://'; then
-            echo "Invalid SUPABASE_BACKUP_FUNCTION_URL: must start with http:// or https://"
-            echo "Current value: '$BACKUP_URL'"
+            echo "::error::SUPABASE_BACKUP_FUNCTION_URL mora počinjati sa https://"
             exit 1
           fi
 
-          echo "Calling backup function: $BACKUP_URL"
-          response=$(curl -sS -w "\n%{http_code}" \
+          CURL_HEADERS=(
+            -H "Content-Type: application/json"
+            -H "x-cron-secret: ${CRON_SECRET}"
+          )
+
+          # Gateway: anon + apikey (preporučeno). Ako nema SUPABASE_ANON_KEY, samo Bearer CRON (verify_jwt=false).
+          if [ -n "$SUPABASE_ANON_KEY" ]; then
+            CURL_HEADERS+=(
+              -H "Authorization: Bearer ${SUPABASE_ANON_KEY}"
+              -H "apikey: ${SUPABASE_ANON_KEY}"
+            )
+          else
+            echo "::warning::SUPABASE_ANON_KEY nije postavljen — koristi se samo Authorization: Bearer CRON_SECRET"
+            CURL_HEADERS+=(-H "Authorization: Bearer ${CRON_SECRET}")
+          fi
+
+          echo "Calling backup function…"
+          response=$(curl -sS --max-time 600 -w "\n%{http_code}" \
             -X POST "$BACKUP_URL" \
-            -H "Authorization: Bearer $CRON_SECRET" \
-            -H "Content-Type: application/json" \
+            "${CURL_HEADERS[@]}" \
             -d '{"trigger":"github-actions-cron"}')
 
-          body=$(echo "$response" | head -n -1)
+          body=$(echo "$response" | sed '$d')
           status=$(echo "$response" | tail -n 1)
 
           echo "HTTP status: $status"
           echo "Response: $body"
 
           if [ "$status" -lt 200 ] || [ "$status" -ge 300 ]; then
-            echo "Backup trigger failed."
+            echo "::error::Backup HTTP $status"
             exit 1
           fi
+
+          if ! echo "$body" | jq -e '.ok == true' >/dev/null 2>&1; then
+            err=$(echo "$body" | jq -r '.error // empty' 2>/dev/null || true)
+            echo "::error::Backup ok:false${err:+ — $err}"
+            exit 1
+          fi
+
+          key=$(echo "$body" | jq -r '.key // empty')
+          rows=$(echo "$body" | jq -r '.totalRows // empty')
+          echo "Backup uspešan. key=${key} totalRows=${rows}"
