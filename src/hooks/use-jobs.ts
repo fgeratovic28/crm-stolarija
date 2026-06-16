@@ -648,7 +648,7 @@ export function useJobs() {
         pricesIncludeVat: pi,
         vatRatePercent: rate,
       });
-      if (!quoteSync.ok) {
+      if (quoteSync.ok === false) {
         throw new Error(quoteSync.error);
       }
     },
