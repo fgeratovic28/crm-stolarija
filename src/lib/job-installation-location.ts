@@ -6,6 +6,56 @@ export type JobInstallationLocationParts = {
   installationFloor?: string | null;
 };
 
+export type JobInstallationLocationSource = {
+  jobInstallationAddress?: string;
+  jobInstallationApartment?: string;
+  jobInstallationFloor?: string;
+  customer: {
+    installationAddress: string;
+    installationApartment?: string;
+    installationFloor?: string;
+  };
+};
+
+function installationAddressIsCoordinatesOnly(text: string | undefined | null): boolean {
+  if (!text) return false;
+  return /^\s*-?\d{1,2}(?:\.\d+)?\s*[,;]\s*-?\d{1,3}(?:\.\d+)?\s*$/.test(text);
+}
+
+/** Efektivna lokacija ugradnje: prvo kolone sa posla, pa fallback na kupca. */
+export function resolveJobInstallationLocationParts(
+  job: JobInstallationLocationSource,
+): JobInstallationLocationParts {
+  const jobStreet = job.jobInstallationAddress?.trim() ?? "";
+  const customerStreet = job.customer.installationAddress?.trim() ?? "";
+
+  let street = jobStreet;
+  if (jobStreet && installationAddressIsCoordinatesOnly(jobStreet)) {
+    street = customerStreet || jobStreet;
+  } else if (!jobStreet) {
+    street = customerStreet;
+  }
+
+  const apartment =
+    job.jobInstallationApartment?.trim() ||
+    job.customer.installationApartment?.trim() ||
+    undefined;
+  const floor =
+    job.jobInstallationFloor?.trim() ||
+    job.customer.installationFloor?.trim() ||
+    undefined;
+
+  return {
+    installationAddress: street || undefined,
+    installationApartment: apartment,
+    installationFloor: floor,
+  };
+}
+
+export function getJobInstallationLocationDisplay(job: JobInstallationLocationSource): string {
+  return formatJobInstallationLocationDisplay(resolveJobInstallationLocationParts(job));
+}
+
 export function formatJobInstallationLocationDisplay(
   parts: JobInstallationLocationParts,
 ): string {

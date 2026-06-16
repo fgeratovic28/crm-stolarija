@@ -104,6 +104,23 @@ function removeMissingJobsColumnFromRow(
   return next;
 }
 
+async function updateJobWithCompatibility(
+  id: string,
+  row: Record<string, unknown>,
+): Promise<void> {
+  let attemptRow: Record<string, unknown> | null = { ...row };
+  let lastError: unknown = null;
+
+  for (let attempt = 0; attempt < 12 && attemptRow; attempt += 1) {
+    const upd = await supabase.from("jobs").update(attemptRow).eq("id", id).select("id").single();
+    if (!upd.error) return;
+    lastError = upd.error;
+    attemptRow = removeMissingJobsColumnFromRow(attemptRow, upd.error as { message?: string; details?: string; hint?: string });
+  }
+
+  throw lastError instanceof Error ? lastError : new Error("Neuspešna izmena posla.");
+}
+
 async function insertJobWithCompatibility(row: Record<string, unknown>) {
   let attemptRow: Record<string, unknown> | null = { ...row };
   let lastError: unknown = null;
@@ -593,28 +610,17 @@ export function useJobs() {
       const updateRow: Record<string, unknown> = {
         customer_id: updatedJob.customerId,
         summary: updatedJob.summary,
-        billing_address: updatedJob.billingAddress,
-        installation_address: updatedJob.installationAddress,
+        billing_address: (updatedJob.billingAddress ?? "").trim() || null,
+        installation_address: (updatedJob.installationAddress ?? "").trim() || null,
         installation_apartment: updatedJob.installationApartment?.trim() || null,
         installation_floor: updatedJob.installationFloor?.trim() || null,
-        customer_phone: updatedJob.customerPhone,
+        customer_phone: (updatedJob.customerPhone ?? "").trim() || null,
       };
       if (Object.prototype.hasOwnProperty.call(updatedJob, "assignedTeamId")) {
         updateRow.team_id = updatedJob.assignedTeamId || null;
       }
 
-      let upd = await supabase.from("jobs").update(updateRow).eq("id", updatedJob.id).select("id").single();
-      if (upd.error) {
-        const legacyRow = {
-          customer_id: updatedJob.customerId,
-          summary: updatedJob.summary,
-          billing_address: updatedJob.billingAddress,
-          installation_address: updatedJob.installationAddress,
-          customer_phone: updatedJob.customerPhone,
-        };
-        upd = await supabase.from("jobs").update(legacyRow).eq("id", updatedJob.id).select("id").single();
-      }
-      if (upd.error) throw upd.error;
+      await updateJobWithCompatibility(updatedJob.id, updateRow);
     },
     onSuccess: (_, variables) => {
       queryClient.invalidateQueries({ queryKey: ["jobs"] });

@@ -13,7 +13,7 @@ import { Plus, Trash2, Check, ChevronsUpDown } from "lucide-react";
 import { toast } from "sonner";
 import { useJobs, type CreateJobInput, type UpdateJobInput } from "@/hooks/use-jobs";
 import { useCustomers } from "@/hooks/use-customers";
-import { getInstallationAddressForDisplay } from "@/lib/map-geocode";
+import { resolveJobInstallationLocationParts } from "@/lib/job-installation-location";
 import { AddressMiniMap } from "@/components/shared/AddressMiniMap";
 import type { Customer, Job } from "@/types";
 import { cn } from "@/lib/utils";
@@ -304,6 +304,8 @@ export function NewJobModal({ trigger, job }: NewJobModalProps) {
   useEffect(() => {
     if (!open || !job) return;
 
+    const location = resolveJobInstallationLocationParts(job);
+
     form.reset({
       customerMode: "existing",
       customerId: job.customer.id || "",
@@ -315,9 +317,9 @@ export function NewJobModal({ trigger, job }: NewJobModalProps) {
       newCustomerRegistrationNumber: "",
       summary: job.summary || "",
       billingAddress: job.jobBillingAddress || job.customer.billingAddress || "",
-      installationAddress: getInstallationAddressForDisplay(job) || "",
-      installationApartment: job.jobInstallationApartment || "",
-      installationFloor: job.jobInstallationFloor || "",
+      installationAddress: location.installationAddress || "",
+      installationApartment: job.jobInstallationApartment || job.customer.installationApartment || "",
+      installationFloor: job.jobInstallationFloor || job.customer.installationFloor || "",
       customerPhone: job.customerPhone || job.customer.phones?.[0] || "",
     });
   }, [open, job, form]);

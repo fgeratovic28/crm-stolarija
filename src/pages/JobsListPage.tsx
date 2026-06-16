@@ -21,6 +21,7 @@ import { useCustomers } from "@/hooks/use-customers";
 import { formatCurrencyBySettings, readAppSettingsCache } from "@/lib/app-settings";
 import { cn } from "@/lib/utils";
 import { jobPrimaryPhone } from "@/lib/job-contact-phone";
+import { getJobInstallationLocationDisplay } from "@/lib/job-installation-location";
 import { isAdditionalWorksChildJob } from "@/lib/job-additional-works-display";
 import { isJobListPreset, jobMatchesListPreset } from "@/lib/job-list-presets";
 import { JOB_STATUS_CONFIG, type Job } from "@/types";
@@ -355,7 +356,7 @@ export default function JobsListPage() {
                             </td>
                             <td className="px-4 lg:px-5 py-3">
                               <p className="text-sm font-medium text-foreground">{job.customer.fullName}</p>
-                              <p className="text-xs text-muted-foreground truncate max-w-48">{job.customer.installationAddress}</p>
+                              <p className="text-xs text-muted-foreground truncate max-w-48">{getJobInstallationLocationDisplay(job)}</p>
                             </td>
                             {showJobPhones && (
                               <td className="px-4 lg:px-5 py-3 text-sm text-muted-foreground">{jobPrimaryPhone(job) || "—"}</td>

@@ -5,6 +5,11 @@ import {
   isCoordsPlausibleForGeocodeAddress,
   normalizeAddressForGeocoding,
 } from "../../lib/geocode-plausibility";
+import {
+  jobInstallationStreetAddress,
+  resolveJobInstallationLocationParts,
+  type JobInstallationLocationSource,
+} from "@/lib/job-installation-location";
 
 export { normalizeAddressForGeocoding } from "../../lib/geocode-plausibility";
 
@@ -17,18 +22,10 @@ export function installationAddressIsCoordinatesOnly(text: string | undefined | 
 }
 
 /**
- * Za prikaz u UI: ako je na poslu u `installation_address` samo lat,lng, koristi adresu klijenta iz `customers`.
+ * Za mapu / geokodiranje: ulica bez stana i sprata; koordinate na poslu → adresa kupca.
  */
-export function getInstallationAddressForDisplay(job: {
-  jobInstallationAddress?: string;
-  customer: { installationAddress: string };
-}): string {
-  const jobPart = job.jobInstallationAddress?.trim() ?? "";
-  const cust = job.customer.installationAddress?.trim() ?? "";
-  if (jobPart && installationAddressIsCoordinatesOnly(jobPart)) {
-    return cust || jobPart;
-  }
-  return jobPart || cust || "";
+export function getInstallationAddressForDisplay(job: JobInstallationLocationSource): string {
+  return jobInstallationStreetAddress(resolveJobInstallationLocationParts(job));
 }
 
 export function parseInlineCoordinates(address?: string | null): { lat: number; lng: number } | null {

@@ -43,6 +43,7 @@ import {
 import { formatWorkOrderScheduleDisplay } from "@/lib/schedule-datetime-display";
 import { labelMaterialType, labelWorkOrderType } from "@/lib/activity-labels";
 import { getInstallationAddressForDisplay } from "@/lib/map-geocode";
+import { getJobInstallationLocationDisplay } from "@/lib/job-installation-location";
 import { getJobInstallationScheduleDisplay } from "@/lib/job-installation-schedule";
 import { useWorkOrders } from "@/hooks/use-work-orders";
 import {
@@ -699,7 +700,8 @@ export default function JobDetailsPage() {
     toast.success("Broj posla kopiran");
   };
 
-  const installationAddressDisplay = getInstallationAddressForDisplay(job);
+  const installationAddressDisplay = getJobInstallationLocationDisplay(job);
+  const installationStreetForMap = getInstallationAddressForDisplay(job);
   const installationScheduleDisplay = getJobInstallationScheduleDisplay(job, jobWorkOrders);
   const scheduleKpiValue = installationScheduleDisplay ?? "—";
   const createdAtDisplay = formatDateByAppLanguage(job.createdAt) || job.createdAt;
@@ -1155,7 +1157,7 @@ export default function JobDetailsPage() {
                       <h4 className="font-semibold text-foreground text-sm">Adresa ugradnje</h4>
                     </div>
                     <p className="text-sm text-muted-foreground">{installationAddressDisplay}</p>
-                    <AddressMiniMap address={installationAddressDisplay} />
+                    <AddressMiniMap address={installationStreetForMap} />
                   </div>
                 </div>
 
