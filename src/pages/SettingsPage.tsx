@@ -37,9 +37,11 @@ import {
   formatJobNextNumberInput,
   formatLegacyJobNumberExample,
   formatNumericJobNumberExample,
+  formatNumericJobNumberFull,
   isValidJobPrefix,
   parseJobNextNumberInput,
   parseJobNumberFormat,
+  parseNumericJobNextSeqInput,
   sanitizeJobPrefixInput,
   type JobNumberFormat,
 } from "@/lib/job-number-settings";
@@ -180,7 +182,8 @@ export default function SettingsPage() {
       if (error || (typeof data !== "number" && typeof data !== "string")) return;
       const n = typeof data === "number" ? data : Number.parseInt(String(data), 10);
       if (!Number.isFinite(n) || n < 1) return;
-      const next = formatJobNextNumberInput(n);
+      const next =
+        format === "numeric" ? formatNumericJobNumberFull(n) : formatJobNextNumberInput(n);
       setJobNextNumber(next);
       setSavedJobNextNumber(next);
       setJobNextNumberDirty(false);
@@ -325,7 +328,10 @@ export default function SettingsPage() {
       return;
     }
 
-    const parsedJobNext = parseJobNextNumberInput(jobNextNumber);
+    const parsedJobNext =
+      jobNumberFormat === "numeric"
+        ? parseNumericJobNextSeqInput(jobNextNumber)
+        : parseJobNextNumberInput(jobNextNumber);
     if (parsedJobNext === null) {
       toast.error(t("settings.toasts.jobNextNumberInvalid"));
       return;
@@ -744,7 +750,9 @@ export default function SettingsPage() {
                               jobNumberYear,
                               parseJobNextNumberInput(jobNextNumber) ?? 1,
                             )
-                          : formatNumericJobNumberExample(parseJobNextNumberInput(jobNextNumber) ?? 1)}
+                          : formatNumericJobNumberExample(
+                              parseNumericJobNextSeqInput(jobNextNumber) ?? 1,
+                            )}
                       </p>
                     </div>
                   </div>
