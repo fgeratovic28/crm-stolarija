@@ -481,6 +481,7 @@ export default defineConfig(({ mode }: { mode: string }) => {
     react(),
     VitePWA({
       registerType: "autoUpdate",
+      injectRegister: electronBuild ? null : "auto",
       includeAssets: ["pwa-icon-192.png", "pwa-icon-512.png"],
       manifest: {
         name: "Termo Plast CRM",
