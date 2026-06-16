@@ -25,6 +25,17 @@ export { computeJobAmountsFromLineSum, sumQuoteLineAmounts } from "@/lib/job-pri
 
 const CREATE_JOB_ACTIVITY = { key: "initial-entry", description: "početni unos" } as const;
 
+function getJobNumberYymmPrefix(date: Date = new Date()): string {
+  const yy = String(date.getFullYear()).slice(-2);
+  const mm = String(date.getMonth() + 1).padStart(2, "0");
+  return `${yy}${mm}`;
+}
+
+function formatNumericJobNumber(nextSeq: number, date: Date = new Date()): string {
+  const seq = Math.max(1, Math.min(9_999_999_999, Math.floor(nextSeq)));
+  return `${getJobNumberYymmPrefix(date)}${String(seq).padStart(2, "0")}`;
+}
+
 /**
  * Embed kreatora na celu listu poslova (fetchJobsList) dovodi do statement timeout-a na Postgresu —
  * RLs + mnogo redova × join na users. Lista koristi kolonu `created_by_name` sa reda jobs.
@@ -104,24 +115,91 @@ function removeMissingJobsColumnFromRow(
   return next;
 }
 
+function isJobNumberConflictError(error: {
+  message?: string;
+  details?: string;
+  hint?: string;
+  code?: string;
+} | null): boolean {
+  if (!error) return false;
+  if (error.code === "23505") return true;
+  const raw = [error.message, error.details, error.hint].filter(Boolean).join(" ");
+  return raw.includes("jobs_job_number_key") || raw.includes("(job_number)");
+}
+
 async function insertJobWithCompatibility(row: Record<string, unknown>) {
   let attemptRow: Record<string, unknown> | null = { ...row };
   let lastError: unknown = null;
 
-  for (let attempt = 0; attempt < 4 && attemptRow; attempt += 1) {
+  for (let attempt = 0; attempt < 12 && attemptRow; attempt += 1) {
     const ins = await supabase.from("jobs").insert([attemptRow]).select("id").single();
     if (!ins.error) return ins;
     lastError = ins.error;
-    attemptRow = removeMissingJobsColumnFromRow(
-      attemptRow,
-      ins.error as { message?: string; details?: string; hint?: string } | null,
+
+    const err = ins.error as {
+      message?: string;
+      details?: string;
+      hint?: string;
+      code?: string;
+    };
+
+    if (isJobNumberConflictError(err) && attemptRow.job_number != null) {
+      try {
+        attemptRow = { ...attemptRow, job_number: await reserveNextJobNumber() };
+        continue;
+      } catch {
+        // fall through to column stripping / final throw
+      }
+    }
+
+    attemptRow = removeMissingJobsColumnFromRow(attemptRow, err);
+  }
+
+  const errObj = lastError as { message?: string; details?: string } | null;
+  if (isJobNumberConflictError(errObj)) {
+    throw new Error(
+      "Broj posla je već zauzet — brojač u bazi nije usklađen. Osvežite stranicu i pokušajte ponovo; ako se ponavlja, prijavite administratoru.",
     );
   }
 
   throw lastError instanceof Error ? lastError : new Error("Neuspešno kreiranje posla.");
 }
 
+async function reserveNextNumericJobNumberFromJobsTable(): Promise<string | null> {
+  const yymm = getJobNumberYymmPrefix();
+  const pattern = new RegExp(`^${yymm}[0-9]+$`);
+  const { data: rows, error } = await supabase
+    .from("jobs")
+    .select("job_number")
+    .like("job_number", `${yymm}%`)
+    .order("job_number", { ascending: false })
+    .limit(50);
+
+  if (error || !rows?.length) return null;
+
+  let maxSeq = 0;
+  for (const row of rows) {
+    const jobNumber = row.job_number;
+    if (typeof jobNumber !== "string" || !pattern.test(jobNumber)) continue;
+    const seq = Number.parseInt(jobNumber.slice(4), 10);
+    if (Number.isFinite(seq) && seq > maxSeq) maxSeq = seq;
+  }
+
+  return formatNumericJobNumber(maxSeq + 1);
+}
+
 async function reserveNextJobNumber(): Promise<string> {
+  const { data: settings, error: settingsError } = await supabase
+    .from("app_settings")
+    .select("job_number_format")
+    .eq("id", 1)
+    .maybeSingle();
+
+  if (!settingsError && settings?.job_number_format === "numeric") {
+    const fromJobsTable = await reserveNextNumericJobNumberFromJobsTable();
+    if (fromJobsTable) return fromJobsTable;
+  }
+
   const { data, error } = await supabase.rpc("next_job_number");
 
   if (error || typeof data !== "string" || data.trim().length === 0) {
@@ -344,7 +422,6 @@ export async function fetchJobByIdForExport(id: string): Promise<Job | null> {
 export interface CreateJobInput {
   customerId: string;
   summary: string;
-  assignedTeamId?: string;
   billingAddress?: string;
   installationAddress?: string;
   installationApartment?: string;
@@ -384,7 +461,6 @@ export function useJobs() {
         job_number: jobNumber,
         status: "new" satisfies JobStatus,
         summary: newJob.summary,
-        team_id: newJob.assignedTeamId || null,
         total_price: 0,
         vat_amount: 0,
         advance_payment: 0,
@@ -599,9 +675,6 @@ export function useJobs() {
         installation_floor: updatedJob.installationFloor?.trim() || null,
         customer_phone: updatedJob.customerPhone,
       };
-      if (Object.prototype.hasOwnProperty.call(updatedJob, "assignedTeamId")) {
-        updateRow.team_id = updatedJob.assignedTeamId || null;
-      }
 
       let upd = await supabase.from("jobs").update(updateRow).eq("id", updatedJob.id).select("id").single();
       if (upd.error) {
