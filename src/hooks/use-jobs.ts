@@ -155,7 +155,7 @@ async function insertJobWithCompatibility(row: Record<string, unknown>) {
     attemptRow = removeMissingJobsColumnFromRow(attemptRow, err);
   }
 
-  const errObj = lastError as { message?: string; details?: string } | null;
+  const errObj = lastError as { message?: string; details?: string; hint?: string; code?: string } | null;
   if (isJobNumberConflictError(errObj)) {
     throw new Error(
       "Broj posla je već zauzet — brojač u bazi nije usklađen. Osvežite stranicu i pokušajte ponovo; ako se ponavlja, prijavite administratoru.",
@@ -163,29 +163,6 @@ async function insertJobWithCompatibility(row: Record<string, unknown>) {
   }
 
   throw lastError instanceof Error ? lastError : new Error("Neuspešno kreiranje posla.");
-}
-
-async function reserveNextNumericJobNumberFromJobsTable(): Promise<string | null> {
-  const yymm = getJobNumberYymmPrefix();
-  const pattern = new RegExp(`^${yymm}[0-9]+$`);
-  const { data: rows, error } = await supabase
-    .from("jobs")
-    .select("job_number")
-    .like("job_number", `${yymm}%`)
-    .order("job_number", { ascending: false })
-    .limit(50);
-
-  if (error || !rows?.length) return null;
-
-  let maxSeq = 0;
-  for (const row of rows) {
-    const jobNumber = row.job_number;
-    if (typeof jobNumber !== "string" || !pattern.test(jobNumber)) continue;
-    const seq = Number.parseInt(jobNumber.slice(4), 10);
-    if (Number.isFinite(seq) && seq > maxSeq) maxSeq = seq;
-  }
-
-  return formatNumericJobNumber(maxSeq + 1);
 }
 
 async function reserveNextJobNumber(): Promise<string> {
@@ -196,8 +173,10 @@ async function reserveNextJobNumber(): Promise<string> {
     .maybeSingle();
 
   if (!settingsError && settings?.job_number_format === "numeric") {
-    const fromJobsTable = await reserveNextNumericJobNumberFromJobsTable();
-    if (fromJobsTable) return fromJobsTable;
+    const { data: peek, error: peekError } = await supabase.rpc("peek_job_number_counter");
+    if (!peekError && typeof peek === "number" && Number.isFinite(peek) && peek > 0) {
+      return formatNumericJobNumber(peek);
+    }
   }
 
   const { data, error } = await supabase.rpc("next_job_number");
